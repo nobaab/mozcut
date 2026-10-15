@@ -853,6 +853,155 @@ class FfmpegEngine implements Engine {
       throw EngineException('audio extraction failed: ${result.stderr}');
     }
   }
+
+  @override
+  Future<List<String>> extractThumbnails({
+    required Clip clip,
+    required int count,
+    int height = 64,
+  }) async {
+    if (count <= 0) return const [];
+    final start = clip.inPoint.clamp(0.0, clip.sourceDuration);
+    final end = clip.outPoint.clamp(0.0, clip.sourceDuration);
+    final regionDuration = end - start;
+    if (regionDuration <= 0) return const [];
+
+    final dir = _mediaCacheDir();
+    final key = _cacheKey([
+      clip.sourcePath,
+      start.toStringAsFixed(3),
+      end.toStringAsFixed(3),
+      height,
+      count,
+    ]);
+    final prefix = 'thumb_$key';
+
+    final cached = _existingSequence(dir, prefix, '.jpg', count);
+    if (cached.isNotEmpty) return cached;
+
+    // One ffmpeg call: resample the trimmed region to a constant
+    // `count / duration` fps via the `fps` filter, so the N output frames
+    // land evenly spaced across the region in a single pass — cheaper than
+    // N separate `-ss` seeks and simpler than building a sprite sheet (which
+    // would need an image-decoding dependency on the Dart side to slice back
+    // apart). `-start_number 0` makes the numbered outputs predictable.
+    final fps = count / regionDuration;
+    final pattern = '${dir.path}/${prefix}_%04d.jpg';
+    try {
+      final result = await Process.run(_ffmpeg, [
+        '-y',
+        '-ss', start.toStringAsFixed(3),
+        '-to', end.toStringAsFixed(3),
+        '-i', clip.sourcePath,
+        '-vf', 'fps=fps=${_fmtFilterNum(fps)},scale=-2:$height',
+        '-frames:v', '$count',
+        '-start_number', '0',
+        pattern,
+      ]);
+      if (result.exitCode != 0) return const [];
+    } catch (_) {
+      return const [];
+    }
+    return _existingSequence(dir, prefix, '.jpg', count);
+  }
+
+  @override
+  Future<String?> waveformPng({
+    required Clip clip,
+    required int width,
+    int height = 40,
+  }) async {
+    if (width <= 0) return null;
+    final start = clip.inPoint.clamp(0.0, clip.sourceDuration);
+    final end = clip.outPoint.clamp(0.0, clip.sourceDuration);
+    if (end - start <= 0) return null;
+
+    final dir = _mediaCacheDir();
+    final key = _cacheKey([
+      clip.sourcePath,
+      start.toStringAsFixed(3),
+      end.toStringAsFixed(3),
+      width,
+      height,
+    ]);
+    final outputPath = '${dir.path}/wave_$key.png';
+    if (File(outputPath).existsSync()) return outputPath;
+
+    try {
+      final result = await Process.run(_ffmpeg, [
+        '-y',
+        '-ss', start.toStringAsFixed(3),
+        '-to', end.toStringAsFixed(3),
+        '-i', clip.sourcePath,
+        // `showwavespic` draws the whole clip as one static image (unlike
+        // `showwaves`, which is a video filter meant for real-time
+        // playback) — exactly the still strip the timeline needs. Mono
+        // keeps stereo/5.1 sources to one waveform line rather than a lane
+        // per channel.
+        '-filter_complex',
+        'aformat=channel_layouts=mono,'
+            'showwavespic=s=${width}x$height:colors=${_ffColor(_waveformColor)}',
+        '-frames:v', '1',
+        outputPath,
+      ]);
+      // Non-zero here is almost always "no audio stream" (or an otherwise
+      // unreadable source) — best-effort, so the timeline just omits the
+      // waveform strip rather than surfacing an error.
+      if (result.exitCode != 0 || !File(outputPath).existsSync()) return null;
+      return outputPath;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Colour used for the timeline waveform strip — matches `AppColors.accent`
+  /// (kept as a literal here so the engine layer stays UI-token-free).
+  static const _waveformColor = '#0568FD';
+
+  /// Cache directory for filmstrip thumbnails and waveform PNGs, created on
+  /// first use. Lives under the system temp dir (rather than
+  /// `getApplicationSupportDirectory()`) so this stays a plain, synchronous,
+  /// no-plugin-dependency helper — same spirit as [renderPreview]'s temp
+  /// output file.
+  static Directory _mediaCacheDir() {
+    final dir = Directory('${Directory.systemTemp.path}/mozcut-thumb-cache');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir;
+  }
+
+  /// A stable (not [Object.hashCode]-based — that's randomized per isolate in
+  /// Dart, so it would make the cache miss on every process restart) hash of
+  /// [parts] used to name cache files deterministically. FNV-1a over the
+  /// parts joined with a separator that can't appear inside any one part's
+  /// own `toString()` (seconds/counts are numeric; the path may contain '|',
+  /// but a collision there would require two different inputs to hash to the
+  /// very same key, not just the same joined string — astronomically
+  /// unlikely for a 64-bit hash).
+  static String _cacheKey(List<Object> parts) {
+    const fnvPrime = 0x100000001b3;
+    var hash = 0xcbf29ce484222325;
+    for (final unit in parts.join('|').codeUnits) {
+      hash = (hash ^ unit) & 0xFFFFFFFFFFFFFFFF;
+      hash = (hash * fnvPrime) & 0xFFFFFFFFFFFFFFFF;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  /// Returns the existing cached `{prefix}_0000.{ext}` .. `{prefix}_{count-1
+  /// (zero-padded)}.{ext}` file paths in [dir], or an empty list if any of
+  /// them is missing (a partial cache from an interrupted run is treated as
+  /// no cache at all, so it's regenerated in full).
+  static List<String> _existingSequence(
+      Directory dir, String prefix, String ext, int count) {
+    final files = <String>[];
+    for (var i = 0; i < count; i++) {
+      final path =
+          '${dir.path}/${prefix}_${i.toString().padLeft(4, '0')}$ext';
+      if (!File(path).existsSync()) return const [];
+      files.add(path);
+    }
+    return files;
+  }
 }
 
 /// The pieces of an ffmpeg invocation produced by

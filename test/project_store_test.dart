@@ -51,6 +51,18 @@ class _NoEngine implements Engine {
     required Clip clip,
     required String outputPath,
   }) async {}
+  @override
+  Future<List<String>> extractThumbnails({
+    required Clip clip,
+    required int count,
+    int height = 64,
+  }) async => const [];
+  @override
+  Future<String?> waveformPng({
+    required Clip clip,
+    required int width,
+    int height = 40,
+  }) async => null;
 }
 
 void main() {
