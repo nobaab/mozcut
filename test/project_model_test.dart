@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/project.dart';
+import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
 
 void main() {
@@ -14,6 +15,9 @@ void main() {
       ],
       textOverlays: [
         TextOverlay(text: 'Title card', start: 0, end: 3, color: '#FF0000'),
+      ],
+      stickerOverlays: [
+        StickerOverlay(emoji: '🔥', start: 1, end: 4, size: 0.15),
       ],
     );
 
@@ -30,16 +34,22 @@ void main() {
     expect(restored.textOverlays.length, 1);
     expect(restored.textOverlays.first.text, 'Title card');
     expect(restored.textOverlays.first.color, '#FF0000');
+    expect(restored.stickerOverlays.length, 1);
+    expect(restored.stickerOverlays.first.emoji, '🔥');
+    expect(restored.stickerOverlays.first.size, 0.15);
   });
 
-  test('project defaults to no text overlays when the key is absent '
-      '(old manifests)', () {
+  test('project defaults to no text/sticker overlays when the keys are '
+      'absent (old manifests)', () {
     final project = Project(folderPath: '/tmp/Old Project', name: 'Old');
-    final manifest = project.toManifest()..remove('textOverlays');
+    final manifest = project.toManifest()
+      ..remove('textOverlays')
+      ..remove('stickerOverlays');
 
     final restored = Project.fromManifest(project.folderPath, manifest);
 
     expect(restored.textOverlays, isEmpty);
+    expect(restored.stickerOverlays, isEmpty);
   });
 
   test('VideoSettings label formats whole and fractional fps', () {

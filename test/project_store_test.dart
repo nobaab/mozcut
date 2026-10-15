@@ -7,6 +7,7 @@ import 'package:mozcut/data/engine/engine.dart';
 import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/project.dart';
+import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
 import 'package:mozcut/data/project/project_store.dart';
 
@@ -29,12 +30,14 @@ class _NoEngine implements Engine {
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double)? onProgress,
   }) async {}
   @override
   Future<String> renderPreview({
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double)? onProgress,
   }) async => '';
   @override

@@ -9,6 +9,7 @@ import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
 import 'editor_shortcuts.dart';
 import 'export_dialog.dart';
+import '../view_models/sticker_overlays_view_model.dart';
 import '../view_models/text_overlays_view_model.dart';
 
 /// The top bar, modelled on CapCut: project name in the middle, and the row of
@@ -106,6 +107,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
     final engine = ref.read(engineProvider);
     final clips = ref.read(editorProvider).clips;
     final textOverlays = ref.read(textOverlaysProvider);
+    final stickerOverlays = ref.read(stickerOverlaysProvider);
     final progress = ref.read(exportProgressProvider.notifier);
     progress.set(0);
     try {
@@ -114,6 +116,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
           outputPath: path,
           settings: settings,
           textOverlays: textOverlays,
+          stickerOverlays: stickerOverlays,
           onProgress: progress.set);
       if (context.mounted) _snack(context, 'Exported to $path');
     } catch (e) {

@@ -5,6 +5,7 @@ import 'package:mozcut/data/engine/engine.dart';
 import 'package:mozcut/data/engine/ffmpeg_engine.dart';
 import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/export_settings.dart';
+import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
 import 'package:mozcut/ui/features/editor/views/timeline_panel.dart';
@@ -20,6 +21,7 @@ class FakeEngine implements Engine {
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double)? onProgress,
   }) async {}
 
@@ -27,6 +29,7 @@ class FakeEngine implements Engine {
   Future<String> renderPreview({
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double)? onProgress,
   }) async => '';
 

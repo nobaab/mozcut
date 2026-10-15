@@ -7,6 +7,7 @@ import '../../domain/models/caption.dart';
 import '../../domain/models/clip.dart';
 import '../../domain/models/color_filter_presets.dart';
 import '../../domain/models/export_settings.dart';
+import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
 import 'engine.dart';
 
@@ -30,6 +31,14 @@ class FfmpegEngine implements Engine {
 
   final String _ffmpeg;
   final String _ffprobe;
+
+  // Cache for [_resolveUsableEmojiFont]'s capability probe — it spawns a real
+  // ffmpeg process, so it's worth paying once per engine lifetime rather than
+  // once per sticker/export. `_emojiFontProbed` distinguishes "not probed
+  // yet" from "probed, and no usable font was found" (where the cache itself
+  // would be null).
+  String? _emojiFontCache;
+  bool _emojiFontProbed = false;
 
   // The engine interface doesn't (yet) carry the project's VideoSettings, so
   // export assumes the standard 1920x1080 canvas every clip's transform is
@@ -83,6 +92,7 @@ class FfmpegEngine implements Engine {
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double progress)? onProgress,
   }) async {
     if (clips.isEmpty) {
@@ -95,6 +105,7 @@ class FfmpegEngine implements Engine {
     final graph = await _buildFilterGraph(
       clips: clips,
       textOverlays: textOverlays,
+      stickerOverlays: stickerOverlays,
       scaleFilter: settings.scaleFilter,
     );
     try {
@@ -127,6 +138,7 @@ class FfmpegEngine implements Engine {
   Future<String> renderPreview({
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double progress)? onProgress,
   }) async {
     if (clips.isEmpty) {
@@ -144,6 +156,7 @@ class FfmpegEngine implements Engine {
     final graph = await _buildFilterGraph(
       clips: clips,
       textOverlays: textOverlays,
+      stickerOverlays: stickerOverlays,
       scaleFilter: 'scale=$_previewWidth:-2',
     );
     try {
@@ -178,16 +191,19 @@ class FfmpegEngine implements Engine {
   /// order, optionally resized (via [scaleFilter], an ffmpeg filter fragment
   /// like `scale=1920:-2`, or `null` to keep the concatenated resolution),
   /// then captions burned in from clips' caption lists, then one `drawtext`
-  /// per entry in [textOverlays]. Factored out of `export` so the two call
-  /// sites can never drift — this is exactly the graph `export` built inline
-  /// before [renderPreview] existed.
+  /// per entry in [textOverlays], then one more `drawtext` per entry in
+  /// [stickerOverlays] (an emoji sticker is rendered as text, with a
+  /// colour-emoji font — see [_resolveUsableEmojiFont]). Factored out of
+  /// `export` so the two call sites can never drift — this is exactly the
+  /// graph `export` built inline before [renderPreview] existed.
   ///
   /// Returns the pieces still needed to assemble a full ffmpeg invocation,
-  /// plus any temp files (captions .srt, overlay text files) the caller must
-  /// delete once its ffmpeg process has exited.
+  /// plus any temp files (captions .srt, overlay/sticker text files) the
+  /// caller must delete once its ffmpeg process has exited.
   Future<_FilterGraph> _buildFilterGraph({
     required List<Clip> clips,
     required List<TextOverlay> textOverlays,
+    List<StickerOverlay> stickerOverlays = const [],
     String? scaleFilter,
   }) async {
     File? srtFile;
@@ -282,6 +298,33 @@ class FfmpegEngine implements Engine {
           final nextLabel = '[vt$i]';
           filter.write(
               ';$videoLabel${_drawtextFilter(textOverlays[i], textFile, fontFile)}$nextLabel');
+          videoLabel = nextLabel;
+        }
+      }
+
+      // Burn in sticker overlays the same way: an emoji is just text, one
+      // `drawtext` per sticker, chained after the title overlays. The only
+      // difference from a text overlay is the font — plain system fonts
+      // (Arial/DejaVu/Liberation, see `_resolveFont`) don't carry colour
+      // glyphs for emoji, so this resolves a colour-emoji font instead (e.g.
+      // macOS's Apple Color Emoji) and passes that as `fontfile`, *after*
+      // confirming this machine's ffmpeg can actually rasterize it — see
+      // [_resolveUsableEmojiFont] for why that check exists and isn't
+      // optional (on an unsupported build, just pointing `fontfile` at a
+      // colour-bitmap font doesn't degrade gracefully, it aborts the whole
+      // filtergraph). Fully additive: no stickers, no filter stage, and the
+      // graph is byte-for-byte what it was before this feature existed.
+      if (stickerOverlays.isNotEmpty) {
+        final emojiFont = await _resolveUsableEmojiFont();
+        for (var i = 0; i < stickerOverlays.length; i++) {
+          final stickerFile = File(
+              '${Directory.systemTemp.path}/mozcut_sticker_${DateTime.now().millisecondsSinceEpoch}_$i.txt');
+          await stickerFile.writeAsString(stickerOverlays[i].emoji);
+          overlayFiles.add(stickerFile);
+
+          final nextLabel = '[vk$i]';
+          filter.write(
+              ';$videoLabel${_drawtextFilter(_asTextOverlay(stickerOverlays[i]), stickerFile, emojiFont)}$nextLabel');
           videoLabel = nextLabel;
         }
       }
@@ -540,6 +583,20 @@ class FfmpegEngine implements Engine {
     return parts.join(':');
   }
 
+  /// Adapts a [StickerOverlay] into the [TextOverlay] shape [_drawtextFilter]
+  /// expects, so sticker burn-in reuses the exact same drawtext/positioning
+  /// logic as title burn-in (an emoji sticker's `x`/`y` are its anchor
+  /// *center*, same as a center-aligned text overlay's).
+  static TextOverlay _asTextOverlay(StickerOverlay sticker) => TextOverlay(
+        text: sticker.emoji,
+        start: sticker.start,
+        end: sticker.end,
+        fontSize: sticker.size,
+        alignment: TextOverlayAlignment.center,
+        x: sticker.x,
+        y: sticker.y,
+      );
+
   /// Resolves a usable TrueType font for `drawtext`, trying common system
   /// locations across macOS/Windows/Linux. Returns null if none is found —
   /// the caller then omits `fontfile` entirely and lets ffmpeg fall back to
@@ -561,6 +618,84 @@ class FfmpegEngine implements Engine {
       if (File(path).existsSync()) return path;
     }
     return null;
+  }
+
+  /// Finds the system's bundled colour-emoji font, if any — the candidate
+  /// [_resolveUsableEmojiFont] then *verifies* before trusting it. Unlike
+  /// [_resolveFont]'s plain TrueType fonts, these carry actual coloured
+  /// bitmap/COLR glyphs for emoji codepoints. Returns null if none of the
+  /// known locations exist.
+  static String? _resolveEmojiFont() {
+    const candidates = [
+      // macOS
+      '/System/Library/Fonts/Apple Color Emoji.ttc',
+      // Linux (common distro paths for the Noto colour-emoji font)
+      '/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf',
+      '/usr/share/fonts/noto/NotoColorEmoji.ttf',
+      // Windows
+      'C:/Windows/Fonts/seguiemj.ttf',
+    ];
+    for (final path in candidates) {
+      if (File(path).existsSync()) return path;
+    }
+    return null;
+  }
+
+  /// Resolves a font for sticker burn-in that this machine's `ffmpeg` can
+  /// actually rasterize, probing once and caching the result for the
+  /// engine's lifetime (see [_emojiFontCache] / [_emojiFontProbed] — the
+  /// probe below is a real process spawn, worth paying once, not once per
+  /// sticker/export).
+  ///
+  /// This exists because "does a colour-emoji font exist on disk" (what
+  /// [_resolveEmojiFont] answers) and "can *this* `ffmpeg` build actually
+  /// draw it" are different questions, and getting that wrong doesn't
+  /// degrade gracefully. Colour-emoji fonts like Apple Color Emoji embed
+  /// fixed-size colour *bitmap* glyphs (not scalable outlines); whether
+  /// `drawtext` can rasterize those depends on how the system's `ffmpeg` was
+  /// built — its text rendering goes through libfreetype, and only builds
+  /// with colour-bitmap support wired up can use them. Verified empirically
+  /// against a stock Homebrew `ffmpeg` on macOS: pointing `fontfile` at
+  /// `Apple Color Emoji.ttc` doesn't render a blank/monochrome glyph as a
+  /// fallback, it fails to initialize the filter at all (`Could not set font
+  /// size ... invalid library handle`, or `Monocromatic (1bpp) fonts are not
+  /// supported`) and aborts the *entire* export — captions, titles, every
+  /// clip, not just the sticker. So before trusting a colour-emoji candidate,
+  /// this renders one throwaway frame with it; only on success is it used,
+  /// otherwise this falls back to [_resolveFont]'s plain font (which won't
+  /// show emoji as a coloured glyph, but reliably won't crash the graph
+  /// either) — the actual "best-effort" in this feature's design.
+  Future<String?> _resolveUsableEmojiFont() async {
+    if (_emojiFontProbed) return _emojiFontCache;
+    _emojiFontProbed = true;
+    final candidate = _resolveEmojiFont();
+    _emojiFontCache = (candidate != null && await _canDrawtextRender(candidate))
+        ? candidate
+        : _resolveFont();
+    return _emojiFontCache;
+  }
+
+  /// Renders one throwaway frame with [fontFile] via `drawtext` to check
+  /// whether this `ffmpeg`/libfreetype build can rasterize it at all, without
+  /// touching any real project files. See [_resolveUsableEmojiFont].
+  Future<bool> _canDrawtextRender(String fontFile) async {
+    try {
+      final result = await Process.run(_ffmpeg, [
+        '-v', 'error',
+        '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1:r=1',
+        '-vf',
+        // A representative emoji codepoint — the actual failure mode above
+        // happens trying to size/rasterize the glyph, not from anything
+        // sticker-specific, so one probe covers every sticker.
+        'drawtext=text=\u{1F600}:fontfile=${_escapeFilterPath(fontFile)}:'
+            'fontsize=h*0.12:fontcolor=white',
+        '-frames:v', '1',
+        '-f', 'null', '-',
+      ]);
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Converts a `#RRGGBB` (or `RRGGBB`) hex colour to the `0xRRGGBB` form

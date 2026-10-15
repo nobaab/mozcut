@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../domain/models/sticker_overlay.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/app_spacing.dart';
+import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../../../core/widgets/fields.dart';
+import '../view_models/sticker_overlays_view_model.dart';
 
 /// A single entry in the sticker catalogue. Emoji categories render the
 /// [emoji] glyph directly; non-emoji categories (e.g. Trending image packs)
@@ -79,9 +83,13 @@ final _kCategories = [
   ]),
 ];
 
-/// The Stickers tab: a searchable, categorised catalogue. Clicking a sticker
-/// is a stub for now — placing stickers on the timeline lands in a later
-/// task. Catalogue UI only; it never touches the Clip model or engine.
+/// The Stickers tab: a searchable, categorised catalogue up top, and the
+/// project's placed stickers below. Clicking an emoji adds a [StickerOverlay]
+/// to the project (timed on the final, concatenated timeline, same as
+/// [TextOverlay]) and burns it into the export via ffmpeg's `drawtext`
+/// filter (an emoji is just text, rendered with a colour-emoji font — see
+/// `FfmpegEngine._resolveUsableEmojiFont`). Non-emoji categories are still a
+/// stub; placing real sticker art is future work.
 class StickersPanel extends StatefulWidget {
   const StickersPanel({super.key});
 
@@ -138,6 +146,7 @@ class _StickersPanelState extends State<StickersPanel> {
         const SizedBox(height: 8),
         const Divider(height: 1, color: AppColors.line),
         Expanded(
+          flex: 3,
           child: stickers.isEmpty
               ? Center(
                   child: Text(
@@ -167,18 +176,31 @@ class _StickersPanelState extends State<StickersPanel> {
                   },
                 ),
         ),
+        const Divider(height: 1, color: AppColors.line),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text('On this project',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white.withValues(alpha: 0.7))),
+          ),
+        ),
+        const Expanded(flex: 2, child: _PlacedStickersList()),
       ],
     );
   }
 }
 
-class _StickerCell extends StatelessWidget {
+class _StickerCell extends ConsumerWidget {
   const _StickerCell({required this.sticker});
 
   final _Sticker sticker;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Tooltip(
       message: sticker.label ?? '',
       child: Material(
@@ -186,10 +208,7 @@ class _StickerCell extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
         child: InkWell(
           borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          onTap: () => ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(const SnackBar(
-                content: Text('Placing stickers — coming soon'))),
+          onTap: () => _tap(context, ref),
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
@@ -203,6 +222,228 @@ class _StickerCell extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  void _tap(BuildContext context, WidgetRef ref) {
+    final emoji = sticker.emoji;
+    if (emoji == null) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+            const SnackBar(content: Text('Placing stickers — coming soon')));
+      return;
+    }
+    ref.read(stickerOverlaysProvider.notifier).add(emoji);
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text('Added $emoji to the project')));
+  }
+}
+
+// ── placed sticker list ─────────────────────────────────────────────────────
+
+class _PlacedStickersList extends ConsumerWidget {
+  const _PlacedStickersList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final overlays = ref.watch(stickerOverlaysProvider);
+
+    if (overlays.isEmpty) {
+      return Center(
+        child: Text(
+          'No stickers yet. Tap an emoji above to place one.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(10),
+      itemCount: overlays.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 6),
+      itemBuilder: (context, i) => _StickerTile(
+        key: ValueKey(overlays[i].id),
+        index: i,
+        overlay: overlays[i],
+      ),
+    );
+  }
+}
+
+/// Edits one placed sticker's timing/position and lets it be deleted —
+/// mirrors `TextPanel`'s `_OverlayTile`.
+class _StickerTile extends ConsumerWidget {
+  const _StickerTile({super.key, required this.index, required this.overlay});
+
+  final int index;
+  final StickerOverlay overlay;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notifier = ref.read(stickerOverlaysProvider.notifier);
+
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: AppColors.well,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(overlay.emoji, style: const TextStyle(fontSize: 22)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${_fmt(overlay.start)} – ${_fmt(overlay.end)}',
+                  style: TextStyle(
+                      fontSize: 10, color: Colors.white.withValues(alpha: 0.4)),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DoubleField(
+                        value: overlay.start,
+                        prefix: 'In',
+                        suffix: 's',
+                        onChanged: (d) =>
+                            notifier.update(index, overlay.copyWith(start: d)),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _DoubleField(
+                        value: overlay.end,
+                        prefix: 'Out',
+                        suffix: 's',
+                        onChanged: (d) =>
+                            notifier.update(index, overlay.copyWith(end: d)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DoubleField(
+                        value: overlay.x,
+                        prefix: 'X',
+                        decimals: 2,
+                        onChanged: (d) =>
+                            notifier.update(index, overlay.copyWith(x: d)),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _DoubleField(
+                        value: overlay.y,
+                        prefix: 'Y',
+                        decimals: 2,
+                        onChanged: (d) =>
+                            notifier.update(index, overlay.copyWith(y: d)),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _DoubleField(
+                        value: overlay.size,
+                        prefix: 'Size',
+                        decimals: 2,
+                        onChanged: (d) =>
+                            notifier.update(index, overlay.copyWith(size: d)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          VIconButton(
+            icon: Icons.close,
+            tooltip: 'Delete',
+            onPressed: () => notifier.removeAt(index),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _fmt(double seconds) {
+    final s = seconds.clamp(0, double.infinity);
+    final m = (s ~/ 60).toInt();
+    final r = s - m * 60;
+    return '$m:${r.toStringAsFixed(1).padLeft(4, '0')}';
+  }
+}
+
+/// A small numeric field for a double value (time/position/size), editable
+/// as text. Keeps its own controller in sync with external changes the same
+/// way `inspector_panel.dart`'s `_SecondsField` does.
+class _DoubleField extends StatefulWidget {
+  const _DoubleField({
+    required this.value,
+    required this.onChanged,
+    this.prefix,
+    this.suffix,
+    this.decimals = 1,
+  });
+
+  final double value;
+  final ValueChanged<double> onChanged;
+  final String? prefix;
+  final String? suffix;
+  final int decimals;
+
+  @override
+  State<_DoubleField> createState() => _DoubleFieldState();
+}
+
+class _DoubleFieldState extends State<_DoubleField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _fmt(widget.value));
+  }
+
+  @override
+  void didUpdateWidget(covariant _DoubleField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      final text = _fmt(widget.value);
+      if (_controller.text != text) _controller.text = text;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String _fmt(double v) => v.toStringAsFixed(widget.decimals);
+
+  @override
+  Widget build(BuildContext context) {
+    return VNumberField(
+      value: _fmt(widget.value),
+      controller: _controller,
+      prefix: widget.prefix,
+      suffix: widget.suffix,
+      onChanged: (text) {
+        final parsed = double.tryParse(text);
+        if (parsed != null) widget.onChanged(parsed);
+      },
     );
   }
 }
