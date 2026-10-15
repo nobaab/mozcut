@@ -424,4 +424,44 @@ void main() {
       expect(() => editor.setSelectedFilter('Noir'), returnsNormally);
     });
   });
+
+  group('setSelectedEffect', () {
+    test('sets the effect on the selected clip', () {
+      editor.setSelectedEffect('Gaussian Blur');
+      expect(clipAt(0).effectId, 'Gaussian Blur');
+    });
+
+    test('clears the effect when passed null', () {
+      editor.setSelectedEffect('Gaussian Blur');
+      editor.setSelectedEffect(null);
+      expect(clipAt(0).effectId, isNull);
+    });
+
+    test('does not affect other clips', () {
+      editor.setSelectedEffect('Vignette');
+      expect(clipAt(1).effectId, isNull);
+      expect(clipAt(2).effectId, isNull);
+    });
+
+    test('is independent of the filter preset', () {
+      editor.setSelectedFilter('Noir');
+      editor.setSelectedEffect('Film Grain');
+      expect(clipAt(0).filterId, 'Noir');
+      expect(clipAt(0).effectId, 'Film Grain');
+    });
+
+    test('does nothing when no clip is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.setSelectedEffect('Vignette'), returnsNormally);
+    });
+
+    test('is undoable', () {
+      editor.setSelectedEffect('Vignette');
+      expect(clipAt(0).effectId, 'Vignette');
+      editor.undo();
+      expect(clipAt(0).effectId, isNull);
+    });
+  });
 }

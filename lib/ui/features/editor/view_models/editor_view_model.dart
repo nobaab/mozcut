@@ -320,6 +320,16 @@ class Editor extends _$Editor {
     _mapSelected((c) => c.copyWith(filterId: filterId, clearFilterId: filterId == null));
   }
 
+  // ── effects ──
+
+  /// Sets (or, passing null, clears) the applied video effect on the
+  /// selected clip. [effectId] should be a key of [kEffectPresets] (see
+  /// `lib/domain/models/effect_presets.dart`) or null.
+  void setSelectedEffect(String? effectId) {
+    _mapSelected((c) =>
+        c.copyWith(effectId: effectId, clearEffectId: effectId == null));
+  }
+
   void _mapSelected(Clip Function(Clip) f) {
     final idx = state.selectedIndex;
     if (idx < 0) return;

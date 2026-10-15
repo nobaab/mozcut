@@ -6,6 +6,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../domain/models/caption.dart';
 import '../../domain/models/clip.dart';
 import '../../domain/models/color_filter_presets.dart';
+import '../../domain/models/effect_presets.dart';
 import '../../domain/models/export_settings.dart';
 import '../../domain/models/text_overlay.dart';
 import 'engine.dart';
@@ -465,6 +466,17 @@ class FfmpegEngine implements Engine {
           'contrast=${_fmtFilterNum(clip.contrast)}:'
           'saturation=${_fmtFilterNum(clip.saturation)}');
     }
+
+    // ── effects ──
+    // A single stylised effect (blur, distort, grain, etc.) picked from the
+    // Effects panel, applied last so it renders on top of the colour grade —
+    // see domain/models/effect_presets.dart for the effectId -> ffmpeg
+    // mapping. No-op by default, so a default clip produces exactly the
+    // filter chain it did before this feature existed.
+    final effect =
+        clip.effectId == null ? null : kEffectPresets[clip.effectId];
+    if (effect != null) steps.add(effect);
+
     filter.write('[$i:v:0]${steps.join(',')}[$fg];');
 
     // 3. Composite the foreground onto the background, offset from center

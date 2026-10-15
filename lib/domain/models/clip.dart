@@ -30,6 +30,7 @@ class Clip {
     double? contrast,
     double? saturation,
     this.filterId,
+    this.effectId,
   })  : id = id ?? _uuid.v4(),
         inPoint = inPoint ?? 0,
         outPoint = outPoint ?? sourceDuration,
@@ -119,6 +120,19 @@ class Clip {
   /// both a preset and manual tweaks can be applied at once.
   String? filterId;
 
+  // ── effects ──
+  // A single stylised video effect (blur, distort, grain, etc.) picked from
+  // the Effects panel (`lib/ui/features/editor/views/effects_panel.dart`'s
+  // `kVideoEffects` catalogue). See
+  // lib/domain/models/effect_presets.dart for the effectId -> ffmpeg
+  // mapping. Independent of filterId/color above — both can be applied at
+  // once. Null (the default) reproduces the pre-feature export output
+  // exactly.
+
+  /// Name of the applied effect (a key into [kEffectPresets]), or null for
+  /// none.
+  String? effectId;
+
   /// Length this clip contributes to the timeline, in seconds: the trimmed
   /// source region (clamped to source bounds) divided by [speed].
   double get duration =>
@@ -144,6 +158,8 @@ class Clip {
     double? saturation,
     String? filterId,
     bool clearFilterId = false,
+    String? effectId,
+    bool clearEffectId = false,
   }) =>
       Clip(
         id: id,
@@ -165,6 +181,7 @@ class Clip {
         contrast: contrast ?? this.contrast,
         saturation: saturation ?? this.saturation,
         filterId: clearFilterId ? null : (filterId ?? this.filterId),
+        effectId: clearEffectId ? null : (effectId ?? this.effectId),
       );
 
   Map<String, dynamic> toJson() => {
@@ -187,6 +204,7 @@ class Clip {
         'contrast': contrast,
         'saturation': saturation,
         'filterId': filterId,
+        'effectId': effectId,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -213,5 +231,6 @@ class Clip {
         contrast: (json['contrast'] as num?)?.toDouble(),
         saturation: (json['saturation'] as num?)?.toDouble(),
         filterId: json['filterId'] as String?,
+        effectId: json['effectId'] as String?,
       );
 }

@@ -95,4 +95,31 @@ void main() {
     final restored = Clip.fromJson(json);
     expect(restored.speed, 1.0);
   });
+
+  test('effectId defaults to null', () {
+    final clip = Clip(sourcePath: '/tmp/a.mp4', sourceDuration: 10);
+    expect(clip.effectId, isNull);
+  });
+
+  test('effectId round-trips through toJson/fromJson', () {
+    final clip = Clip(sourcePath: '/tmp/a.mp4', sourceDuration: 10)
+        .copyWith(effectId: 'Gaussian Blur');
+    final restored = Clip.fromJson(clip.toJson());
+    expect(restored.effectId, 'Gaussian Blur');
+  });
+
+  test('copyWith clearEffectId clears the effect', () {
+    final clip = Clip(sourcePath: '/tmp/a.mp4', sourceDuration: 10)
+        .copyWith(effectId: 'Vignette');
+    expect(clip.effectId, 'Vignette');
+    final cleared = clip.copyWith(clearEffectId: true);
+    expect(cleared.effectId, isNull);
+  });
+
+  test('fromJson defaults effectId to null when absent (older projects)', () {
+    final json = Clip(sourcePath: '/tmp/a.mp4', sourceDuration: 10).toJson()
+      ..remove('effectId');
+    final restored = Clip.fromJson(json);
+    expect(restored.effectId, isNull);
+  });
 }

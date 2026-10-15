@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+// Aliased: this file also uses Flutter's own `Clip` widget behavior enum, so
+// the domain model needs a distinct name to avoid colliding with it.
+import '../../../../domain/models/clip.dart' as domain show Clip;
 import '../../../core/app_colors.dart';
 import '../../../core/app_spacing.dart';
 import '../../../core/widgets/chips.dart';
 import '../../../core/widgets/fields.dart';
+import '../view_models/editor_view_model.dart';
 
 /// A single entry in the effects catalogue: a name and the category it's
 /// filed under (matching Concat's built-in video-effect categories, see
@@ -15,8 +20,10 @@ class VideoEffect {
 }
 
 /// Concat's 21 built-in video effects, grouped into the categories CapCut
-/// uses for its own effects browser. Apply logic is a later task — selecting
-/// one here just confirms the pick (see [_EffectCard.onTap]).
+/// uses for its own effects browser. Tapping one in [EffectsPanel] sets
+/// [domain.Clip.effectId] on the selected clip, which
+/// `lib/domain/models/effect_presets.dart` maps to a concrete ffmpeg filter
+/// applied on export (see `FfmpegEngine._videoFilterChain`).
 const List<VideoEffect> kVideoEffects = [
   VideoEffect('Sharpen', 'Basic'),
   VideoEffect('Contrast', 'Basic'),
@@ -56,16 +63,19 @@ const List<String> kEffectCategories = [
 ];
 
 /// The Effects tab: a searchable, category-filterable grid of Concat's
-/// built-in video effects. Clicking a card is a stub for now — wiring an
-/// effect onto the selected clip is a later task.
-class EffectsPanel extends StatefulWidget {
+/// built-in video effects. Tapping a card applies (or, tapping the
+/// already-applied one again, clears) that effect on the selected clip's
+/// [domain.Clip.effectId] — see `effect_presets.dart` for the name -> ffmpeg
+/// mapping actually used on export. Same interaction shape as the Filters
+/// tab (`filters_panel.dart`).
+class EffectsPanel extends ConsumerStatefulWidget {
   const EffectsPanel({super.key});
 
   @override
-  State<EffectsPanel> createState() => _EffectsPanelState();
+  ConsumerState<EffectsPanel> createState() => _EffectsPanelState();
 }
 
-class _EffectsPanelState extends State<EffectsPanel> {
+class _EffectsPanelState extends ConsumerState<EffectsPanel> {
   final _searchController = TextEditingController();
   String _query = '';
   String _category = 'All';
@@ -76,8 +86,20 @@ class _EffectsPanelState extends State<EffectsPanel> {
     super.dispose();
   }
 
+  void _applyEffect(domain.Clip? clip, VideoEffect effect) {
+    if (clip == null) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text('Select a clip first')));
+      return;
+    }
+    final editor = ref.read(editorProvider.notifier);
+    editor.setSelectedEffect(clip.effectId == effect.name ? null : effect.name);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected));
     final query = _query.trim().toLowerCase();
     final effects = kVideoEffects.where((e) {
       final matchesCategory = _category == 'All' || e.category == _category;
@@ -98,6 +120,25 @@ class _EffectsPanelState extends State<EffectsPanel> {
             onChanged: (value) => setState(() => _query = value),
           ),
         ),
+        if (clip?.effectId != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('Effect: ${clip!.effectId}',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.7))),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      ref.read(editorProvider.notifier).setSelectedEffect(null),
+                  child: const Text('None'),
+                ),
+              ],
+            ),
+          ),
         SizedBox(
           height: AppSpacing.controlHeight,
           child: ListView.separated(
@@ -145,6 +186,8 @@ class _EffectsPanelState extends State<EffectsPanel> {
                       itemCount: effects.length,
                       itemBuilder: (context, i) => _EffectCard(
                         effect: effects[i],
+                        selected: effects[i].name == clip?.effectId,
+                        onTap: () => _applyEffect(clip, effects[i]),
                       ),
                     );
                   },
@@ -156,19 +199,21 @@ class _EffectsPanelState extends State<EffectsPanel> {
 }
 
 class _EffectCard extends StatelessWidget {
-  const _EffectCard({required this.effect});
+  const _EffectCard({
+    required this.effect,
+    required this.selected,
+    required this.onTap,
+  });
 
   final VideoEffect effect;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-      onTap: () => ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(content: Text('${effect.name} — coming soon')),
-        ),
+      onTap: onTap,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -178,13 +223,18 @@ class _EffectCard extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.well,
                 borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                border: Border.all(color: AppColors.line),
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.line,
+                  width: selected ? 2 : 1,
+                ),
               ),
               child: Center(
                 child: Icon(
                   Icons.auto_awesome_outlined,
                   size: 22,
-                  color: Colors.white.withValues(alpha: 0.4),
+                  color: selected
+                      ? AppColors.accent
+                      : Colors.white.withValues(alpha: 0.4),
                 ),
               ),
             ),
