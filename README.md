@@ -9,6 +9,7 @@ No subscription. No watermark. No account. No upload. Ever.
 <img src="assets/screenshot.png" alt="MozCut editor" width="85%" />
 
 <p>
+  <a href="https://github.com/nobaab/mozcut/actions/workflows/ci.yml"><img src="https://github.com/nobaab/mozcut/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="#"><img src="https://img.shields.io/badge/License-MIT-0568FD?style=flat-square" alt="License: MIT" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Built%20with-Flutter-02569B?style=flat-square&logo=flutter&logoColor=white" alt="Built with Flutter" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-macOS%20·%20Windows%20·%20Linux-212123?style=flat-square" alt="Platforms" /></a>
@@ -98,6 +99,13 @@ flutter run -d macos   # or -d windows / -d linux
 flutter test                      # unit + widget tests
 flutter test --tags integration   # real ffmpeg end-to-end tests
 ```
+
+### Build & release
+
+Want a packaged macOS app instead of running from source? See
+[`RELEASE.md`](RELEASE.md) for building a release `.app`, packaging it as a
+`.dmg`, and what's still TODO before a public release (bundling FFmpeg,
+re-enabling the app sandbox, code signing/notarization).
 
 ## 🗺️ Roadmap
 
