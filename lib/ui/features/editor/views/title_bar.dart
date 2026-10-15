@@ -7,6 +7,7 @@ import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
+import 'editor_shortcuts.dart';
 
 /// The top bar, modelled on CapCut: project name in the middle, and the row of
 /// actions on the right (Shortcuts, Pro, Share, Export). Back to the launcher is
@@ -53,7 +54,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
           VButton(
               label: 'Shortcuts',
               icon: Icons.keyboard_outlined,
-              onPressed: () => _soon(context, 'Shortcuts')),
+              onPressed: () => showEditorShortcutsDialog(context)),
           const SizedBox(width: 8),
           VButton(
               label: 'Share',
