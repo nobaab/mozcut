@@ -109,11 +109,9 @@ class FfmpegEngine implements Engine {
         ]);
       }
 
-      // Per clip: apply the transform (scale / position / rotation / flip)
-      // chain, then a speed change (setpts on video, atempo on audio), then
-      // concat all clips, then burn captions onto the joined video. Every step
-      // is additive: an untouched clip (identity transform, speed 1, no
-      // captions) produces the same graph as before these features existed.
+      // Per clip: transform (scale/pos/rotate/flip) on video, speed (setpts +
+      // atempo), then audio volume/fades — then concat, then burn captions.
+      // Every step is additive: a default clip reproduces the old graph exactly.
       final filter = StringBuffer();
       final videoLabels = <String>[];
       final audioLabels = <String>[];
@@ -130,6 +128,11 @@ class FfmpegEngine implements Engine {
               .join(',');
           filter.write('[$i:a:0]$atempo[sa$i];');
           alabel = 'sa$i';
+        }
+        final achain = _audioFilterChain(clip);
+        if (achain != null) {
+          filter.write('[$alabel]$achain[fa$i];');
+          alabel = 'fa$i';
         }
         videoLabels.add(vlabel);
         audioLabels.add(alabel);
@@ -307,6 +310,29 @@ class FfmpegEngine implements Engine {
     return out;
   }
 
+  /// Builds the `volume`/`afade` filter chain for [clip]'s audio, or `null`
+  /// if it is at the defaults (volume 1.0, no fades) and therefore needs no
+  /// processing at all. Keeping the no-op case `null` (rather than e.g.
+  /// `volume=1.0`) is what keeps [export] fully additive: a timeline of
+  /// default clips produces the exact filtergraph it did before this feature
+  /// existed.
+  static String? _audioFilterChain(Clip clip) {
+    final parts = <String>[];
+    if (clip.volume != 1.0) {
+      parts.add('volume=${clip.volume.toStringAsFixed(3)}');
+    }
+    if (clip.fadeIn > 0) {
+      parts.add('afade=t=in:st=0:d=${clip.fadeIn.toStringAsFixed(3)}');
+    }
+    if (clip.fadeOut > 0) {
+      final start =
+          (clip.duration - clip.fadeOut).clamp(0, clip.duration);
+      parts.add(
+          'afade=t=out:st=${start.toStringAsFixed(3)}:d=${clip.fadeOut.toStringAsFixed(3)}');
+    }
+    return parts.isEmpty ? null : parts.join(',');
+  }
+
   @override
   Future<void> savePoster({
     required Clip clip,
@@ -323,6 +349,24 @@ class FfmpegEngine implements Engine {
     ]);
     if (result.exitCode != 0) {
       throw EngineException('poster extraction failed: ${result.stderr}');
+    }
+  }
+
+  @override
+  Future<void> extractAudio({
+    required Clip clip,
+    required String outputPath,
+  }) async {
+    final result = await Process.run(_ffmpeg, [
+      '-y',
+      '-ss', clip.inPoint.toStringAsFixed(3),
+      '-to', clip.outPoint.toStringAsFixed(3),
+      '-i', clip.sourcePath,
+      '-vn',
+      outputPath,
+    ]);
+    if (result.exitCode != 0) {
+      throw EngineException('audio extraction failed: ${result.stderr}');
     }
   }
 }

@@ -82,11 +82,13 @@ class Clip {
   /// twice as fast (half the timeline length); 0.5 is half speed.
   final double speed;
 
-  /// Audio gain. 1.0 = 100% (unchanged), 2.0 = +doubled, 0 = muted.
+  /// Audio gain. 1.0 = 100% (unchanged), 2.0 = doubled, 0 = muted.
   final double volume;
 
-  /// Audio fade-in / fade-out lengths, in seconds (0 = none).
+  /// Audio fade-in length from the in-point, in seconds (0 = none).
   final double fadeIn;
+
+  /// Audio fade-out length ending at the out-point, in seconds (0 = none).
   final double fadeOut;
 
   /// Length this clip contributes to the timeline, in seconds: the trimmed

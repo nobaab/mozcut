@@ -145,6 +145,17 @@ class Editor extends _$Editor {
     _mapSelected((c) => c.copyWith(speed: speed.clamp(0.1, 100.0)));
   }
 
+  /// Updates volume (0.0–2.0, i.e. 0–200%) and/or fade in/out (seconds) of
+  /// the selected clip. Any omitted parameter is left unchanged. Volume is
+  /// clamped to 0–2; fades are clamped to non-negative.
+  void updateSelectedAudio({double? volume, double? fadeIn, double? fadeOut}) {
+    _mapSelected((c) => c.copyWith(
+          volume: volume?.clamp(0.0, 2.0),
+          fadeIn: fadeIn?.clamp(0.0, double.infinity),
+          fadeOut: fadeOut?.clamp(0.0, double.infinity),
+        ));
+  }
+
   /// Replaces all captions on the selected clip (e.g. after transcription).
   void setSelectedCaptions(List<Caption> captions) {
     _mapSelected((c) => c.copyWith(captions: captions));

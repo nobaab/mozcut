@@ -40,6 +40,7 @@ class InspectorPanel extends ConsumerWidget {
                     EditorRightTab.video => _VideoTab(),
                     EditorRightTab.speed =>
                       _SpeedTab(key: ValueKey(clip.id)),
+                    EditorRightTab.audio => _AudioTab(),
                     _ => _ComingSoon(label: rightTab.label),
                   },
           ),
@@ -573,4 +574,115 @@ class _ComingSoon extends StatelessWidget {
               style: TextStyle(color: Colors.white.withValues(alpha: 0.4))),
         ),
       );
+}
+
+/// The Audio tab: volume (0–200%, default 100) and fade in/out (seconds),
+/// wired to [Editor.updateSelectedAudio] and, on export, to ffmpeg's
+/// `volume`/`afade` filters.
+class _AudioTab extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected))!;
+    final editor = ref.read(editorProvider.notifier);
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        VSectionHeader('Volume'),
+        VPropertyRow(
+          label: 'Volume',
+          child: Row(
+            children: [
+              Expanded(
+                child: Slider(
+                  value: clip.volume.clamp(0.0, 2.0),
+                  min: 0,
+                  max: 2,
+                  onChanged: (v) => editor.updateSelectedAudio(volume: v),
+                ),
+              ),
+              SizedBox(
+                width: 44,
+                child: Text('${(clip.volume * 100).round()}%',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        VSectionHeader('Fade'),
+        VPropertyRow(
+          label: 'Fade in',
+          child: _SecondsField(
+            key: ValueKey('${clip.id}-fadeIn'),
+            value: clip.fadeIn,
+            onChanged: (v) => editor.updateSelectedAudio(fadeIn: v),
+          ),
+        ),
+        VPropertyRow(
+          label: 'Fade out',
+          child: _SecondsField(
+            key: ValueKey('${clip.id}-fadeOut'),
+            value: clip.fadeOut,
+            onChanged: (v) => editor.updateSelectedAudio(fadeOut: v),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A small numeric field for a seconds value (fade in/out), editable as text.
+/// Keeps its own controller in sync with external changes (e.g. switching
+/// the selected clip) the same way the captions panel syncs its text field.
+class _SecondsField extends StatefulWidget {
+  const _SecondsField({super.key, required this.value, required this.onChanged});
+
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  @override
+  State<_SecondsField> createState() => _SecondsFieldState();
+}
+
+class _SecondsFieldState extends State<_SecondsField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _fmt(widget.value));
+  }
+
+  @override
+  void didUpdateWidget(covariant _SecondsField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      final text = _fmt(widget.value);
+      if (_controller.text != text) _controller.text = text;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return VNumberField(
+      value: _fmt(widget.value),
+      controller: _controller,
+      suffix: 's',
+      onChanged: (text) {
+        final parsed = double.tryParse(text);
+        if (parsed != null && parsed >= 0) widget.onChanged(parsed);
+      },
+    );
+  }
+
+  static String _fmt(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
 }

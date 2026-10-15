@@ -27,6 +27,15 @@ abstract class Engine {
     required String outputPath,
     int width = 480,
   });
+
+  /// Extracts [clip]'s trimmed audio (its in/out region) to [outputPath].
+  /// The container/codec is inferred from [outputPath]'s extension (e.g.
+  /// `.wav` or `.mp3`). Throws [EngineException] if the clip has no audio or
+  /// extraction otherwise fails.
+  Future<void> extractAudio({
+    required Clip clip,
+    required String outputPath,
+  });
 }
 
 class EngineException implements Exception {

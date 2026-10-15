@@ -60,4 +60,53 @@ void main() {
     });
     expect(clip.captions, isEmpty);
   });
+
+  test('Clip defaults volume/fadeIn/fadeOut to 1.0/0/0', () {
+    final clip = Clip(sourcePath: '/v/a.mp4', sourceDuration: 10);
+    expect(clip.volume, 1.0);
+    expect(clip.fadeIn, 0);
+    expect(clip.fadeOut, 0);
+  });
+
+  test('Clip audio fields survive a JSON round-trip', () {
+    final clip = Clip(
+      sourcePath: '/v/a.mp4',
+      sourceDuration: 10,
+      volume: 1.5,
+      fadeIn: 0.5,
+      fadeOut: 1.25,
+    );
+
+    final restored = Clip.fromJson(clip.toJson());
+
+    expect(restored.volume, 1.5);
+    expect(restored.fadeIn, 0.5);
+    expect(restored.fadeOut, 1.25);
+  });
+
+  test('Clip defaults audio fields when absent from JSON (old manifests)', () {
+    final clip = Clip.fromJson({
+      'id': 'x',
+      'sourcePath': '/v/a.mp4',
+      'sourceDuration': 10.0,
+    });
+    expect(clip.volume, 1.0);
+    expect(clip.fadeIn, 0);
+    expect(clip.fadeOut, 0);
+  });
+
+  test('Clip.copyWith only overrides the given audio fields', () {
+    final clip = Clip(
+      sourcePath: '/v/a.mp4',
+      sourceDuration: 10,
+      volume: 1.2,
+      fadeIn: 1,
+      fadeOut: 2,
+    );
+    final edited = clip.copyWith(volume: 0.5);
+
+    expect(edited.volume, 0.5);
+    expect(edited.fadeIn, 1);
+    expect(edited.fadeOut, 2);
+  });
 }
