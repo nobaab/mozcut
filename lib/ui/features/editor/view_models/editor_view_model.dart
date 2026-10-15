@@ -286,6 +286,40 @@ class Editor extends _$Editor {
         ));
   }
 
+  // ── color / filter ──
+
+  /// Updates manual brightness/contrast/saturation of the selected clip. Any
+  /// omitted parameter is left unchanged. Brightness is clamped to -1..1;
+  /// contrast and saturation to 0..3 (ffmpeg's `eq` filter range).
+  void updateSelectedColor({
+    double? brightness,
+    double? contrast,
+    double? saturation,
+  }) {
+    _mapSelected((c) => c.copyWith(
+          brightness: brightness?.clamp(-1.0, 1.0).toDouble(),
+          contrast: contrast?.clamp(0.0, 3.0).toDouble(),
+          saturation: saturation?.clamp(0.0, 3.0).toDouble(),
+        ));
+  }
+
+  /// Resets the selected clip's manual colour adjustments back to neutral.
+  /// Leaves any applied filter preset ([Clip.filterId]) untouched.
+  void resetColor() {
+    _mapSelected((c) => c.copyWith(
+          brightness: 0.0,
+          contrast: 1.0,
+          saturation: 1.0,
+        ));
+  }
+
+  /// Sets (or, passing null, clears) the applied filter preset on the
+  /// selected clip. [filterId] should be a key of [kColorFilterPresets] or
+  /// null.
+  void setSelectedFilter(String? filterId) {
+    _mapSelected((c) => c.copyWith(filterId: filterId, clearFilterId: filterId == null));
+  }
+
   void _mapSelected(Clip Function(Clip) f) {
     final idx = state.selectedIndex;
     if (idx < 0) return;

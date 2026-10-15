@@ -26,6 +26,10 @@ class Clip {
     double? volume,
     double? fadeIn,
     double? fadeOut,
+    double? brightness,
+    double? contrast,
+    double? saturation,
+    this.filterId,
   })  : id = id ?? _uuid.v4(),
         inPoint = inPoint ?? 0,
         outPoint = outPoint ?? sourceDuration,
@@ -38,7 +42,10 @@ class Clip {
         speed = speed ?? 1.0,
         volume = volume ?? 1.0,
         fadeIn = fadeIn ?? 0.0,
-        fadeOut = fadeOut ?? 0.0;
+        fadeOut = fadeOut ?? 0.0,
+        brightness = brightness ?? 0.0,
+        contrast = contrast ?? 1.0,
+        saturation = saturation ?? 1.0;
 
   final String id;
   final String sourcePath;
@@ -91,6 +98,27 @@ class Clip {
   /// Audio fade-out length ending at the out-point, in seconds (0 = none).
   final double fadeOut;
 
+  // ── color / filter ──
+  // Manual colour correction plus an optional named preset look (see
+  // lib/domain/models/color_filter_presets.dart for the filterId -> ffmpeg
+  // mapping). Neutral values (brightness 0, contrast/saturation 1.0,
+  // filterId null) reproduce the pre-feature export output exactly.
+
+  /// Manual brightness offset fed to ffmpeg's `eq` filter. 0 = unchanged;
+  /// roughly -1..1.
+  double brightness;
+
+  /// Manual contrast multiplier fed to ffmpeg's `eq` filter. 1.0 = unchanged.
+  double contrast;
+
+  /// Manual saturation multiplier fed to ffmpeg's `eq` filter. 1.0 = unchanged.
+  double saturation;
+
+  /// Name of the applied filter preset (a key into [kColorFilterPresets]), or
+  /// null for none. Independent of brightness/contrast/saturation above —
+  /// both a preset and manual tweaks can be applied at once.
+  String? filterId;
+
   /// Length this clip contributes to the timeline, in seconds: the trimmed
   /// source region (clamped to source bounds) divided by [speed].
   double get duration =>
@@ -111,6 +139,11 @@ class Clip {
     double? volume,
     double? fadeIn,
     double? fadeOut,
+    double? brightness,
+    double? contrast,
+    double? saturation,
+    String? filterId,
+    bool clearFilterId = false,
   }) =>
       Clip(
         id: id,
@@ -128,6 +161,10 @@ class Clip {
         volume: volume ?? this.volume,
         fadeIn: fadeIn ?? this.fadeIn,
         fadeOut: fadeOut ?? this.fadeOut,
+        brightness: brightness ?? this.brightness,
+        contrast: contrast ?? this.contrast,
+        saturation: saturation ?? this.saturation,
+        filterId: clearFilterId ? null : (filterId ?? this.filterId),
       );
 
   Map<String, dynamic> toJson() => {
@@ -146,6 +183,10 @@ class Clip {
         'volume': volume,
         'fadeIn': fadeIn,
         'fadeOut': fadeOut,
+        'brightness': brightness,
+        'contrast': contrast,
+        'saturation': saturation,
+        'filterId': filterId,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -168,5 +209,9 @@ class Clip {
         volume: (json['volume'] as num?)?.toDouble(),
         fadeIn: (json['fadeIn'] as num?)?.toDouble(),
         fadeOut: (json['fadeOut'] as num?)?.toDouble(),
+        brightness: (json['brightness'] as num?)?.toDouble(),
+        contrast: (json['contrast'] as num?)?.toDouble(),
+        saturation: (json['saturation'] as num?)?.toDouble(),
+        filterId: json['filterId'] as String?,
       );
 }

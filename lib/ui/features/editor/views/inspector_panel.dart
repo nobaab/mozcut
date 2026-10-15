@@ -41,6 +41,7 @@ class InspectorPanel extends ConsumerWidget {
                     EditorRightTab.speed =>
                       _SpeedTab(key: ValueKey(clip.id)),
                     EditorRightTab.audio => _AudioTab(),
+                    EditorRightTab.adjustment => _AdjustmentTab(),
                     _ => _ComingSoon(label: rightTab.label),
                   },
           ),
@@ -685,4 +686,97 @@ class _SecondsFieldState extends State<_SecondsField> {
 
   static String _fmt(double v) =>
       v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+}
+
+/// The Adjustment tab: Brightness / Contrast / Saturation sliders wired to
+/// the selected clip's manual colour correction (independent of any applied
+/// filter preset — see the Filters panel), plus a Reset. On export these
+/// become an `eq=...` stage layered on top of the clip's filter preset, if
+/// any (see FfmpegEngine's `_videoFilterChain`).
+class _AdjustmentTab extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected))!;
+    final editor = ref.read(editorProvider.notifier);
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        VSectionHeader('Color'),
+        VPropertyRow(
+          label: 'Brightness',
+          child: _adjustSlider(
+            value: clip.brightness,
+            min: -1,
+            max: 1,
+            display: '${(clip.brightness * 100).round()}',
+            onChanged: (v) => editor.updateSelectedColor(brightness: v),
+          ),
+        ),
+        VPropertyRow(
+          label: 'Contrast',
+          child: _adjustSlider(
+            value: clip.contrast,
+            min: 0,
+            max: 2,
+            display: '${(clip.contrast * 100).round()}%',
+            onChanged: (v) => editor.updateSelectedColor(contrast: v),
+          ),
+        ),
+        VPropertyRow(
+          label: 'Saturation',
+          child: _adjustSlider(
+            value: clip.saturation,
+            min: 0,
+            max: 2,
+            display: '${(clip.saturation * 100).round()}%',
+            onChanged: (v) => editor.updateSelectedColor(saturation: v),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: const Icon(Icons.restart_alt, size: 15),
+            label: const Text('Reset'),
+            onPressed: editor.resetColor,
+          ),
+        ),
+        if (clip.filterId != null) ...[
+          const SizedBox(height: 18),
+          VSectionHeader('Filter'),
+          VPropertyRow(
+            label: 'Applied',
+            child: Text(clip.filterId!, style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _adjustSlider({
+    required double value,
+    required double min,
+    required double max,
+    required String display,
+    required ValueChanged<double> onChanged,
+  }) =>
+      Row(
+        children: [
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 44,
+            child: Text(display,
+                textAlign: TextAlign.right,
+                style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+      );
 }
