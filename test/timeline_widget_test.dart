@@ -56,11 +56,12 @@ void main() {
         .addClip('/Users/x/My Videos/holiday.mp4');
     await tester.pump();
 
+    // The clip appears as a bar on the timeline, named.
     expect(find.text('holiday.mp4'), findsOneWidget);
-    expect(find.text('12.0s'), findsOneWidget);
 
     // Selected clip should be highlighted — state wiring works.
     expect(container.read(editorProvider).selected?.fileName, 'holiday.mp4');
+    expect(container.read(editorProvider).clips.first.duration, 12.0);
   });
 
   testWidgets('split turns one clip into two bars', (tester) async {
@@ -81,9 +82,11 @@ void main() {
     ctrl.splitSelectedAt(5);
     await tester.pump();
 
-    // Two bars now: 5.0s and 7.0s.
-    expect(container.read(editorProvider).clips.length, 2);
-    expect(find.text('5.0s'), findsOneWidget);
-    expect(find.text('7.0s'), findsOneWidget);
+    // Two bars now (same source name), durations 5s + 7s.
+    final clips = container.read(editorProvider).clips;
+    expect(clips.length, 2);
+    expect(clips[0].duration, closeTo(5, 0.001));
+    expect(clips[1].duration, closeTo(7, 0.001));
+    expect(find.text('clip.mp4'), findsNWidgets(2));
   });
 }

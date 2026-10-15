@@ -38,7 +38,7 @@ codebase, same app everywhere.
 ## ✨ Features
 
 - 🗂️ **Project launcher** — create, save and reopen projects from a recent-projects grid with poster thumbnails (like CapCut / DaVinci)
-- 🎛️ **Pro editor layout** — media bin, centre monitor, inspector and timeline, the classic NLE arrangement (modelled on Concat)
+- 🎛️ **CapCut-style editor** — feature rail (Import, Audio, Text, Stickers, Effects, Transitions, Captions, Filters…), media browser, centre monitor, inspector (Video/Audio/Speed/Animation/Adjustment with Transform & Blend), timeline with ruler, playhead and zoom. Most panels are scaffolded now; their sub-options land over time
 - 🎬 **Import** video files — mp4, mov, mkv, webm, avi, m4v
 - ▶️ **Preview** with play / pause / frame-accurate scrubbing
 - ✂️ **Split** a clip at the playhead
