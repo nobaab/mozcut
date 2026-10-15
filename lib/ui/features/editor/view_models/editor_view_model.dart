@@ -56,6 +56,42 @@ class Editor extends _$Editor {
 
   void select(String id) => state = state.copyWith(selectedId: id);
 
+  /// Moves the clip at [oldIndex] to [newIndex] on the single track.
+  /// [newIndex] is the target position *after* the clip has been removed
+  /// from [oldIndex] — e.g. moving the first of three clips to the end is
+  /// `reorder(0, 2)`. Used by drag-to-reorder on the timeline.
+  void reorder(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= state.clips.length) return;
+    final clips = [...state.clips];
+    final clip = clips.removeAt(oldIndex);
+    clips.insert(newIndex.clamp(0, clips.length), clip);
+    state = state.copyWith(clips: clips);
+  }
+
+  /// Sets the trim in/out of the clip with [id] (source seconds), clamped to
+  /// the source and to a minimum clip length of 0.1s. Used by the timeline's
+  /// trim handles, which drag one edge at a time.
+  void setTrim(String id, {double? inPoint, double? outPoint}) {
+    final idx = state.clips.indexWhere((c) => c.id == id);
+    if (idx < 0) return;
+    final clips = [...state.clips];
+    final c = clips[idx];
+    var newIn = (inPoint ?? c.inPoint).clamp(0.0, c.sourceDuration);
+    var newOut = (outPoint ?? c.outPoint).clamp(0.0, c.sourceDuration);
+    const minLength = 0.1;
+    if (newOut - newIn < minLength) {
+      if (inPoint != null) {
+        // Dragging the left handle: don't let it pass the right edge.
+        newIn = (newOut - minLength).clamp(0.0, c.sourceDuration);
+      } else {
+        // Dragging the right handle: don't let it pass the left edge.
+        newOut = (newIn + minLength).clamp(0.0, c.sourceDuration);
+      }
+    }
+    clips[idx] = c.copyWith(inPoint: newIn, outPoint: newOut);
+    state = state.copyWith(clips: clips);
+  }
+
   void removeSelected() {
     final id = state.selectedId;
     if (id == null) return;
