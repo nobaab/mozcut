@@ -61,6 +61,33 @@ abstract class Engine {
     required Clip clip,
     required String outputPath,
   });
+
+  /// Extracts [count] JPEG frame thumbnails evenly spaced across [clip]'s
+  /// trimmed region (inPoint..outPoint), each scaled to [height] tall
+  /// (width preserves source aspect). Returns their file paths in timeline
+  /// order (left to right). Used to paint the timeline's filmstrip.
+  ///
+  /// Results are cached on disk keyed by (sourcePath, inPoint, outPoint,
+  /// height, count), so calling this again with the same arguments returns
+  /// instantly without re-running ffmpeg. Best-effort: returns an empty list
+  /// (never throws) if extraction fails, e.g. the source has no video stream.
+  Future<List<String>> extractThumbnails({
+    required Clip clip,
+    required int count,
+    int height = 64,
+  });
+
+  /// Renders a waveform image of [clip]'s trimmed audio (inPoint..outPoint),
+  /// [width]x[height], for the timeline's audio strip. Returns the cached
+  /// PNG's file path, or `null` if [clip] has no audio track (or rendering
+  /// otherwise fails) — best-effort, never throws.
+  ///
+  /// Cached on disk keyed by (sourcePath, inPoint, outPoint, width, height).
+  Future<String?> waveformPng({
+    required Clip clip,
+    required int width,
+    int height = 40,
+  });
 }
 
 class EngineException implements Exception {

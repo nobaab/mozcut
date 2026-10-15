@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,6 +8,7 @@ import '../../../core/app_colors.dart';
 import '../../../core/widgets/split_handle.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
+import '../view_models/thumbnails_view_model.dart';
 
 /// The timeline: a fixed track-header gutter on the left, then a horizontally
 /// scrolling ruler + track lane. Clips sit end to end on one video track, sized
@@ -291,17 +294,38 @@ int _clipIndexAt(List<model.Clip> clips, List<double> starts, double t) {
   return t < starts.first ? 0 : clips.length - 1;
 }
 
-class _ClipBar extends StatelessWidget {
-  const _ClipBar({required this.name, required this.selected});
-  final String name;
+/// A clip's bar background: a filmstrip of real frames across its width with
+/// a waveform strip along the bottom (CapCut-style), the filename label, and
+/// the selected/accent border. Thumbnails/waveform are fetched through
+/// [clipFilmstripProvider]/[clipWaveformProvider] (see
+/// `thumbnails_view_model.dart`) — while those are loading (or if extraction
+/// isn't possible, e.g. no audio track) this just keeps showing the original
+/// solid-colour bar underneath, so there is never an empty/broken-looking gap.
+class _ClipBar extends ConsumerWidget {
+  const _ClipBar(
+      {required this.clip, required this.widthPx, required this.selected});
+
+  final model.Clip clip;
+  final double widthPx;
   final bool selected;
 
+  static const _barColor = Color(0xFF2A3550);
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = thumbnailCountForWidth(widthPx);
+    final waveformWidth = waveformWidthForBarWidth(widthPx);
+    final thumbs = ref
+        .watch(clipFilmstripProvider(clip, count, kFilmstripThumbHeight))
+        .value;
+    final wave = ref
+        .watch(clipWaveformProvider(clip, waveformWidth, kWaveformHeight))
+        .value;
+
     return Container(
       margin: const EdgeInsets.only(right: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF2A3550),
+        color: _barColor,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: selected ? AppColors.accent : Colors.transparent,
@@ -309,18 +333,70 @@ class _ClipBar extends StatelessWidget {
         ),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Row(
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          Container(
-            width: 4,
-            color: AppColors.accent.withValues(alpha: 0.8),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11)),
+          // Filmstrip: real frames tiled across the bar, behind everything
+          // else. Falls back to the plain bar colour until frames are ready.
+          if (thumbs != null && thumbs.isNotEmpty)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final path in thumbs)
+                  Expanded(
+                    child: Image.file(
+                      File(path),
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
+                  ),
+              ],
+            ),
+          // Waveform strip along the bottom, over a translucent scrim so it
+          // reads against any frame behind it.
+          if (wave != null)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Container(
+                height: kWaveformHeight.toDouble(),
+                width: double.infinity,
+                color: Colors.black.withValues(alpha: 0.35),
+                child: Image.file(
+                  File(wave),
+                  fit: BoxFit.fill,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          // Accent tab + filename label, on top of everything, with a scrim
+          // behind the text so it stays legible over bright frames.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 4,
+                height: double.infinity,
+                color: AppColors.accent.withValues(alpha: 0.8),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 1),
+                  margin: const EdgeInsets.only(top: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(clip.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -409,7 +485,11 @@ class _ClipSlotState extends State<_ClipSlot> {
                   setState(() => _dragDx += d.delta.dx),
               onHorizontalDragEnd: (_) => _commitReorder(),
               onHorizontalDragCancel: () => setState(() => _dragDx = 0),
-              child: _ClipBar(name: widget.clip.fileName, selected: widget.selected),
+              child: _ClipBar(
+                clip: widget.clip,
+                widthPx: widget.clip.duration * widget.px,
+                selected: widget.selected,
+              ),
             ),
           ),
         ),
