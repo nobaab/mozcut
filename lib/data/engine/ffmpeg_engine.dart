@@ -38,6 +38,10 @@ class FfmpegEngine implements Engine {
   static const _canvasHeight = 1080;
   static const _canvasFps = 30;
 
+  // renderPreview's proxy render: small enough to render fast, big enough to
+  // judge framing/captions/overlays at a glance.
+  static const _previewWidth = 640;
+
   static const _candidateDirs = [
     '/opt/homebrew/bin',
     '/usr/local/bin',
@@ -87,33 +91,121 @@ class FfmpegEngine implements Engine {
     final totalDuration =
         clips.fold<double>(0, (sum, c) => sum + c.duration);
 
-    // If any clip carries captions, burn them into the output via ffmpeg's
-    // `subtitles` filter, fed from a temp .srt built from all clips' caption
-    // lists with their timing shifted onto the final, concatenated timeline.
-    // Keep this fully additive: no captions anywhere means no subtitles
-    // filter and export behaves exactly as before.
-    File? srtFile;
-    if (clips.any((c) => c.captions.isNotEmpty)) {
-      srtFile = File(
-          '${Directory.systemTemp.path}/mozcut_captions_${DateTime.now().millisecondsSinceEpoch}.srt');
-      await srtFile.writeAsString(_buildSrt(clips));
-    }
-
-    // Each overlay's text is written to its own temp file and referenced via
-    // drawtext's `textfile=` option, rather than embedding it inline as
-    // `text=...`. This sidesteps ffmpeg's filtergraph escaping entirely for
-    // arbitrary user text (colons, apostrophes, percent signs, …) — the only
-    // thing that still needs escaping is the plain file path, exactly like
-    // the subtitles file above.
-    final overlayFiles = <File>[];
+    final graph = await _buildFilterGraph(
+      clips: clips,
+      textOverlays: textOverlays,
+      scaleFilter: settings.scaleFilter,
+    );
     try {
       // One ffmpeg call: each clip is an input trimmed with -ss/-to, then the
       // concat filter joins them. Re-encoding (not stream copy) so clips with
       // different codecs/resolutions still join cleanly — correctness over
       // speed for v0.1.
-      final args = <String>['-y'];
+      final args = <String>[
+        '-y',
+        ...graph.inputArgs,
+        '-filter_complex', graph.filterComplex,
+        '-map', graph.videoLabel,
+        '-map', graph.audioLabel,
+        ...settings.toFfmpegArgs(),
+        '-progress', 'pipe:1',
+        '-nostats',
+        outputPath,
+      ];
+
+      await _runFfmpeg(args,
+          totalDuration: totalDuration,
+          action: 'export',
+          onProgress: onProgress);
+    } finally {
+      await _deleteAll(graph.tempFiles);
+    }
+  }
+
+  @override
+  Future<String> renderPreview({
+    required List<Clip> clips,
+    List<TextOverlay> textOverlays = const [],
+    void Function(double progress)? onProgress,
+  }) async {
+    if (clips.isEmpty) {
+      throw EngineException('Nothing to preview — the timeline is empty.');
+    }
+
+    final totalDuration =
+        clips.fold<double>(0, (sum, c) => sum + c.duration);
+    final outputPath =
+        '${Directory.systemTemp.path}/mozcut_preview_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+    // Same filtergraph as export() (via _buildFilterGraph) so the preview is
+    // never out of sync with the real edit — just scaled down and encoded for
+    // speed instead of quality.
+    final graph = await _buildFilterGraph(
+      clips: clips,
+      textOverlays: textOverlays,
+      scaleFilter: 'scale=$_previewWidth:-2',
+    );
+    try {
+      final args = <String>[
+        '-y',
+        ...graph.inputArgs,
+        '-filter_complex', graph.filterComplex,
+        '-map', graph.videoLabel,
+        '-map', graph.audioLabel,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '28',
+        '-c:a', 'aac',
+        '-progress', 'pipe:1',
+        '-nostats',
+        outputPath,
+      ];
+
+      await _runFfmpeg(args,
+          totalDuration: totalDuration,
+          action: 'preview render',
+          onProgress: onProgress);
+      return outputPath;
+    } finally {
+      await _deleteAll(graph.tempFiles);
+    }
+  }
+
+  /// Builds the input args and `-filter_complex` graph shared by [export] and
+  /// [renderPreview]: per-clip transform (scale/pos/rotate/flip) on video,
+  /// speed (setpts + atempo), then audio volume/fades — concatenated in
+  /// order, optionally resized (via [scaleFilter], an ffmpeg filter fragment
+  /// like `scale=1920:-2`, or `null` to keep the concatenated resolution),
+  /// then captions burned in from clips' caption lists, then one `drawtext`
+  /// per entry in [textOverlays]. Factored out of `export` so the two call
+  /// sites can never drift — this is exactly the graph `export` built inline
+  /// before [renderPreview] existed.
+  ///
+  /// Returns the pieces still needed to assemble a full ffmpeg invocation,
+  /// plus any temp files (captions .srt, overlay text files) the caller must
+  /// delete once its ffmpeg process has exited.
+  Future<_FilterGraph> _buildFilterGraph({
+    required List<Clip> clips,
+    required List<TextOverlay> textOverlays,
+    String? scaleFilter,
+  }) async {
+    File? srtFile;
+    final overlayFiles = <File>[];
+    try {
+      // If any clip carries captions, burn them into the output via ffmpeg's
+      // `subtitles` filter, fed from a temp .srt built from all clips'
+      // caption lists with their timing shifted onto the final, concatenated
+      // timeline. Keep this fully additive: no captions anywhere means no
+      // subtitles filter and the graph is exactly what it was before.
+      if (clips.any((c) => c.captions.isNotEmpty)) {
+        srtFile = File(
+            '${Directory.systemTemp.path}/mozcut_captions_${DateTime.now().millisecondsSinceEpoch}.srt');
+        await srtFile.writeAsString(_buildSrt(clips));
+      }
+
+      final inputArgs = <String>[];
       for (final clip in clips) {
-        args.addAll([
+        inputArgs.addAll([
           '-ss', clip.inPoint.toStringAsFixed(3),
           '-to', clip.outPoint.toStringAsFixed(3),
           '-i', clip.sourcePath,
@@ -153,12 +245,11 @@ class FfmpegEngine implements Engine {
       }
       filter.write('concat=n=${clips.length}:v=1:a=1[vcat][outa]');
 
-      // Chain optional stages (scale from export settings, then subtitles) onto
-      // the concat output, each writing to a fresh label so the filtergraph
-      // stays a simple linear pipe no matter which stages are present.
+      // Chain optional stages (resize, then subtitles) onto the concat
+      // output, each writing to a fresh label so the filtergraph stays a
+      // simple linear pipe no matter which stages are present.
       var videoLabel = '[vcat]';
       var nextLabelIndex = 1;
-      final scaleFilter = settings.scaleFilter;
       if (scaleFilter != null) {
         final outLabel = '[vs$nextLabelIndex]';
         filter.write(';$videoLabel$scaleFilter$outLabel');
@@ -178,7 +269,7 @@ class FfmpegEngine implements Engine {
       // against `t`, which on this output label is already the final,
       // concatenated timeline — exactly what TextOverlay.start/end are
       // defined against. Fully additive: no overlays, no filter stage, and
-      // the export is byte-for-byte what it was before this feature.
+      // the graph is byte-for-byte what it was before this feature.
       if (textOverlays.isNotEmpty) {
         final fontFile = _resolveFont();
         for (var i = 0; i < textOverlays.length; i++) {
@@ -194,58 +285,69 @@ class FfmpegEngine implements Engine {
         }
       }
 
-      args.addAll([
-        '-filter_complex', filter.toString(),
-        '-map', videoLabel,
-        '-map', '[outa]',
-        ...settings.toFfmpegArgs(),
-        '-progress', 'pipe:1',
-        '-nostats',
-        outputPath,
-      ]);
+      return _FilterGraph(
+        inputArgs: inputArgs,
+        filterComplex: filter.toString(),
+        videoLabel: videoLabel,
+        audioLabel: '[outa]',
+        tempFiles: [?srtFile, ...overlayFiles],
+      );
+    } catch (_) {
+      // Building the graph failed partway (e.g. a temp-file write error) —
+      // clean up whatever was already written before letting the error
+      // surface, same best-effort spirit as the success-path cleanup.
+      await _deleteAll([?srtFile, ...overlayFiles]);
+      rethrow;
+    }
+  }
 
-      final process = await Process.start(_ffmpeg, args);
+  /// Runs ffmpeg with [args], forwarding `-progress pipe:1` output as a 0..1
+  /// fraction of [totalDuration] to [onProgress], and throws
+  /// [EngineException] (worded with [action], e.g. `'export'`) if it exits
+  /// non-zero. On success, calls `onProgress(1)` once.
+  Future<void> _runFfmpeg(
+    List<String> args, {
+    required double totalDuration,
+    required String action,
+    void Function(double progress)? onProgress,
+  }) async {
+    final process = await Process.start(_ffmpeg, args);
 
-      // ffmpeg prints `out_time_ms=...` lines on stdout with -progress.
-      process.stdout
-          .transform(const SystemEncoding().decoder)
-          .transform(const LineSplitter())
-          .listen((line) {
-        if (onProgress == null || totalDuration <= 0) return;
-        if (line.startsWith('out_time_ms=')) {
-          final us =
-              int.tryParse(line.substring('out_time_ms='.length).trim());
-          if (us != null) {
-            onProgress((us / 1e6 / totalDuration).clamp(0.0, 1.0));
-          }
+    // ffmpeg prints `out_time_ms=...` lines on stdout with -progress.
+    process.stdout
+        .transform(const SystemEncoding().decoder)
+        .transform(const LineSplitter())
+        .listen((line) {
+      if (onProgress == null || totalDuration <= 0) return;
+      if (line.startsWith('out_time_ms=')) {
+        final us =
+            int.tryParse(line.substring('out_time_ms='.length).trim());
+        if (us != null) {
+          onProgress((us / 1e6 / totalDuration).clamp(0.0, 1.0));
         }
-      });
-
-      final stderr = StringBuffer();
-      process.stderr
-          .transform(const SystemEncoding().decoder)
-          .listen(stderr.write);
-
-      final code = await process.exitCode;
-      if (code != 0) {
-        throw EngineException('ffmpeg export failed (exit $code):\n$stderr');
       }
-      onProgress?.call(1);
-    } finally {
-      if (srtFile != null && srtFile.existsSync()) {
+    });
+
+    final stderr = StringBuffer();
+    process.stderr
+        .transform(const SystemEncoding().decoder)
+        .listen(stderr.write);
+
+    final code = await process.exitCode;
+    if (code != 0) {
+      throw EngineException('ffmpeg $action failed (exit $code):\n$stderr');
+    }
+    onProgress?.call(1);
+  }
+
+  /// Best-effort deletes every file in [files], ignoring individual failures.
+  static Future<void> _deleteAll(List<File> files) async {
+    for (final file in files) {
+      if (file.existsSync()) {
         try {
-          await srtFile.delete();
+          await file.delete();
         } catch (_) {
           // Best-effort cleanup only.
-        }
-      }
-      for (final file in overlayFiles) {
-        if (file.existsSync()) {
-          try {
-            await file.delete();
-          } catch (_) {
-            // Best-effort cleanup only.
-          }
         }
       }
     }
@@ -489,4 +591,27 @@ class FfmpegEngine implements Engine {
       throw EngineException('audio extraction failed: ${result.stderr}');
     }
   }
+}
+
+/// The pieces of an ffmpeg invocation produced by
+/// [FfmpegEngine._buildFilterGraph], shared by [FfmpegEngine.export] and
+/// [FfmpegEngine.renderPreview]: the per-clip `-i` input args, the
+/// `-filter_complex` graph string, the final video/audio pad labels to
+/// `-map` (brackets included, e.g. `[vt0]` / `[outa]`), and any temp files
+/// the graph depends on (captions .srt, overlay text files) that the caller
+/// must delete once its ffmpeg process has exited.
+class _FilterGraph {
+  _FilterGraph({
+    required this.inputArgs,
+    required this.filterComplex,
+    required this.videoLabel,
+    required this.audioLabel,
+    required this.tempFiles,
+  });
+
+  final List<String> inputArgs;
+  final String filterComplex;
+  final String videoLabel;
+  final String audioLabel;
+  final List<File> tempFiles;
 }

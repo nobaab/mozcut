@@ -3,17 +3,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../../data/engine/ffmpeg_engine.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/player_control.dart';
+import '../view_models/text_overlays_view_model.dart';
 
 /// The centre monitor, modelled on CapCut's Player: a "Player" header, the video
 /// in the middle, and a controls bar (timecode, play, fit, aspect, fullscreen).
 ///
-/// v0.x previews one clip at a time (the selected one). Full timeline-sequence
-/// playback is a later step; export already joins the whole timeline.
+/// By default this previews one clip at a time (the selected one's raw
+/// source) — cheap and instant while scrubbing/trimming. The "Render preview"
+/// button in the header renders the *whole* timeline (transforms, speed,
+/// volume, captions, text overlays — the same filtergraph `export` uses, just
+/// small/fast) via [Engine.renderPreview] and loads that proxy instead, so the
+/// player can show the real edit on demand.
 class PlayerPanel extends ConsumerStatefulWidget {
   const PlayerPanel({super.key});
 
@@ -29,6 +35,12 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _playing = false;
+
+  // True once a timeline proxy (from [Engine.renderPreview]) is loaded —
+  // while true, the per-selected-clip raw-source sync below is suppressed so
+  // changing the timeline selection doesn't kick the player back to showing
+  // one clip's raw source.
+  bool _previewMode = false;
 
   @override
   void initState() {
@@ -54,7 +66,10 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final selected = ref.watch(editorProvider.select((s) => s.selected));
+    final editorState = ref.watch(editorProvider);
+    final selected = editorState.selected;
+    final hasClips = editorState.clips.isNotEmpty;
+    final previewBusy = ref.watch(previewRenderingProvider);
 
     // Keyboard shortcuts (Space, Left/Right arrow) send commands here rather
     // than touching media_kit directly, since the Player lives in this
@@ -75,23 +90,35 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
       }
     });
 
-    if (selected != null && selected.sourcePath != _loadedPath) {
-      _loadedPath = selected.sourcePath;
-      _player.open(Media(selected.sourcePath), play: false);
-    } else if (selected == null && _loadedPath != null) {
-      _loadedPath = null;
-      _player.stop();
+    if (!hasClips) {
+      // Nothing left to show — drop out of preview mode too, so the next
+      // import goes back to the normal per-clip sync below.
+      if (_loadedPath != null || _previewMode) {
+        _loadedPath = null;
+        _previewMode = false;
+        _player.stop();
+      }
+    } else if (!_previewMode) {
+      // Not showing a timeline proxy: keep the player in sync with whichever
+      // clip is selected, same as before "Render preview" existed.
+      if (selected != null && selected.sourcePath != _loadedPath) {
+        _loadedPath = selected.sourcePath;
+        _player.open(Media(selected.sourcePath), play: false);
+      } else if (selected == null && _loadedPath != null) {
+        _loadedPath = null;
+        _player.stop();
+      }
     }
 
     return Container(
       color: AppColors.bg,
       child: Column(
         children: [
-          _header(),
+          _header(hasClips: hasClips, busy: previewBusy),
           Expanded(
             child: Container(
               color: Colors.black,
-              child: selected == null
+              child: !hasClips
                   ? Center(
                       child: Text('Import a video to start',
                           style: TextStyle(
@@ -106,7 +133,35 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     );
   }
 
-  Widget _header() => Container(
+  /// Renders the whole timeline (all clips, transforms, speed, volume,
+  /// captions, text overlays) to a low-res proxy via [Engine.renderPreview]
+  /// and loads it into the player, replacing whatever raw clip was showing.
+  Future<void> _renderPreview() async {
+    final clips = ref.read(editorProvider).clips;
+    if (clips.isEmpty) return;
+    final textOverlays = ref.read(textOverlaysProvider);
+    final engine = ref.read(engineProvider);
+
+    ref.read(previewRenderingProvider.notifier).set(true);
+    try {
+      final path =
+          await engine.renderPreview(clips: clips, textOverlays: textOverlays);
+      if (!mounted) return;
+      _previewMode = true;
+      _loadedPath = path;
+      await _player.open(Media(path), play: false);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text('Preview render failed: $e')));
+      }
+    } finally {
+      if (mounted) ref.read(previewRenderingProvider.notifier).set(false);
+    }
+  }
+
+  Widget _header({required bool hasClips, required bool busy}) => Container(
         height: 34,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: const BoxDecoration(
@@ -117,6 +172,22 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
             const Text('Player',
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             const Spacer(),
+            if (busy)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6),
+                child: SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else
+              VIconButton(
+                icon: Icons.movie_creation_outlined,
+                tooltip: 'Render preview',
+                onPressed: hasClips ? _renderPreview : null,
+              ),
+            const SizedBox(width: 4),
             Icon(Icons.menu, size: 16, color: Colors.white.withValues(alpha: 0.6)),
           ],
         ),

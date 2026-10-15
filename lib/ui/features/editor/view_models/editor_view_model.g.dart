@@ -178,3 +178,69 @@ abstract class _$Playhead extends $Notifier<double> {
     return element.handleCreate(ref, build);
   }
 }
+
+/// Whether a WYSIWYG proxy render ([Engine.renderPreview]) is currently in
+/// flight. Written by the player panel's "Render preview" button, read by its
+/// header to show a busy indicator and disable the button mid-render.
+
+@ProviderFor(PreviewRendering)
+final previewRenderingProvider = PreviewRenderingProvider._();
+
+/// Whether a WYSIWYG proxy render ([Engine.renderPreview]) is currently in
+/// flight. Written by the player panel's "Render preview" button, read by its
+/// header to show a busy indicator and disable the button mid-render.
+final class PreviewRenderingProvider
+    extends $NotifierProvider<PreviewRendering, bool> {
+  /// Whether a WYSIWYG proxy render ([Engine.renderPreview]) is currently in
+  /// flight. Written by the player panel's "Render preview" button, read by its
+  /// header to show a busy indicator and disable the button mid-render.
+  PreviewRenderingProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'previewRenderingProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$previewRenderingHash();
+
+  @$internal
+  @override
+  PreviewRendering create() => PreviewRendering();
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(bool value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<bool>(value),
+    );
+  }
+}
+
+String _$previewRenderingHash() => r'ac17c73e13ee0dc80a28290ec29b59efc71bc240';
+
+/// Whether a WYSIWYG proxy render ([Engine.renderPreview]) is currently in
+/// flight. Written by the player panel's "Render preview" button, read by its
+/// header to show a busy indicator and disable the button mid-render.
+
+abstract class _$PreviewRendering extends $Notifier<bool> {
+  bool build();
+  @$mustCallSuper
+  @override
+  WhenComplete runBuild() {
+    final ref = this.ref as $Ref<bool, bool>;
+    final element =
+        ref.element
+            as $ClassProviderElement<
+              AnyNotifier<bool, bool>,
+              bool,
+              Object?,
+              Object?
+            >;
+    return element.handleCreate(ref, build);
+  }
+}

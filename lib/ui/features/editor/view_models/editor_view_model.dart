@@ -313,3 +313,13 @@ class Playhead extends _$Playhead {
   double build() => 0;
   void set(double seconds) => state = seconds;
 }
+
+/// Whether a WYSIWYG proxy render ([Engine.renderPreview]) is currently in
+/// flight. Written by the player panel's "Render preview" button, read by its
+/// header to show a busy indicator and disable the button mid-render.
+@Riverpod(keepAlive: true)
+class PreviewRendering extends _$PreviewRendering {
+  @override
+  bool build() => false;
+  void set(bool value) => state = value;
+}

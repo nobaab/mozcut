@@ -32,6 +32,12 @@ class _NoEngine implements Engine {
     void Function(double)? onProgress,
   }) async {}
   @override
+  Future<String> renderPreview({
+    required List<Clip> clips,
+    List<TextOverlay> textOverlays = const [],
+    void Function(double)? onProgress,
+  }) async => '';
+  @override
   Future<void> savePoster({
     required Clip clip,
     required String outputPath,
