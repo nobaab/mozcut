@@ -5,6 +5,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:vidkaat/data/engine/engine.dart';
 import 'package:vidkaat/domain/models/clip.dart';
+import 'package:vidkaat/domain/models/export_settings.dart';
 import 'package:vidkaat/domain/models/project.dart';
 import 'package:vidkaat/data/project/project_store.dart';
 
@@ -25,6 +26,7 @@ class _NoEngine implements Engine {
   Future<void> export({
     required List<Clip> clips,
     required String outputPath,
+    ExportSettings settings = const ExportSettings(),
     void Function(double)? onProgress,
   }) async {}
   @override

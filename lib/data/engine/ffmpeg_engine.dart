@@ -5,6 +5,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../domain/models/caption.dart';
 import '../../domain/models/clip.dart';
+import '../../domain/models/export_settings.dart';
 import 'engine.dart';
 
 part 'ffmpeg_engine.g.dart';
@@ -74,6 +75,7 @@ class FfmpegEngine implements Engine {
   Future<void> export({
     required List<Clip> clips,
     required String outputPath,
+    ExportSettings settings = const ExportSettings(),
     void Function(double progress)? onProgress,
   }) async {
     if (clips.isEmpty) {
@@ -142,21 +144,31 @@ class FfmpegEngine implements Engine {
       }
       filter.write('concat=n=${clips.length}:v=1:a=1[vcat][outa]');
 
+      // Chain optional stages (scale from export settings, then subtitles) onto
+      // the concat output, each writing to a fresh label so the filtergraph
+      // stays a simple linear pipe no matter which stages are present.
       var videoLabel = '[vcat]';
+      var nextLabelIndex = 1;
+      final scaleFilter = settings.scaleFilter;
+      if (scaleFilter != null) {
+        final outLabel = '[vs$nextLabelIndex]';
+        filter.write(';$videoLabel$scaleFilter$outLabel');
+        videoLabel = outLabel;
+        nextLabelIndex++;
+      }
       if (srtFile != null) {
+        final outLabel = '[vs$nextLabelIndex]';
         filter.write(
-            ';[vcat]subtitles=${_escapeFilterPath(srtFile.path)}[vout]');
-        videoLabel = '[vout]';
+            ';${videoLabel}subtitles=${_escapeFilterPath(srtFile.path)}$outLabel');
+        videoLabel = outLabel;
+        nextLabelIndex++;
       }
 
       args.addAll([
         '-filter_complex', filter.toString(),
         '-map', videoLabel,
         '-map', '[outa]',
-        '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '18',
-        '-c:a', 'aac',
+        ...settings.toFfmpegArgs(),
         '-progress', 'pipe:1',
         '-nostats',
         outputPath,

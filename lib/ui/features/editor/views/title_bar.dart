@@ -8,6 +8,7 @@ import '../../../core/widgets/buttons.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
 import 'editor_shortcuts.dart';
+import 'export_dialog.dart';
 
 /// The top bar, modelled on CapCut: project name in the middle, and the row of
 /// actions on the right (Shortcuts, Pro, Share, Export). Back to the launcher is
@@ -92,19 +93,25 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
         ..showSnackBar(SnackBar(content: Text('$what — coming soon')));
 
   Future<void> _export(BuildContext context, WidgetRef ref) async {
+    final settings = await showExportDialog(context);
+    if (settings == null) return;
+    if (!context.mounted) return;
     await FilePicker.skipEntitlementsChecks();
     final dir = await FilePicker.getDirectoryPath(
         dialogTitle: 'Choose where to export');
     if (dir == null) return;
-    final path =
-        '$dir/vidkaat_export_${DateTime.now().millisecondsSinceEpoch}.mp4';
+    final path = '$dir/vidkaat_export_${DateTime.now().millisecondsSinceEpoch}'
+        '.${settings.fileExtension}';
     final engine = ref.read(engineProvider);
     final clips = ref.read(editorProvider).clips;
     final progress = ref.read(exportProgressProvider.notifier);
     progress.set(0);
     try {
       await engine.export(
-          clips: clips, outputPath: path, onProgress: progress.set);
+          clips: clips,
+          outputPath: path,
+          settings: settings,
+          onProgress: progress.set);
       if (context.mounted) _snack(context, 'Exported to $path');
     } catch (e) {
       if (context.mounted) _snack(context, 'Export failed: $e');
