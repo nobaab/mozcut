@@ -1,6 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../../../data/engine/ffmpeg_engine.dart';
+import '../../../../domain/models/caption.dart';
 import '../../../../domain/models/clip.dart';
 
 part 'editor_view_model.g.dart';
@@ -85,7 +86,10 @@ class Editor extends _$Editor {
         sourceSeconds >= c.outPoint - 0.05) {
       return; // split point outside the usable region
     }
-    final left = c.copyWith(outPoint: sourceSeconds);
+    // Captions were timed against the old in/out window, so they no longer
+    // line up once it is split in two — drop them rather than show stale
+    // text. Regenerate per-half if needed.
+    final left = c.copyWith(outPoint: sourceSeconds, captions: const []);
     final right = Clip(
       sourcePath: c.sourcePath,
       sourceDuration: c.sourceDuration,
@@ -96,6 +100,30 @@ class Editor extends _$Editor {
       ..removeAt(idx)
       ..insertAll(idx, [left, right]);
     state = state.copyWith(clips: clips, selectedId: left.id);
+  }
+
+  /// Replaces all captions on the selected clip (e.g. after transcription).
+  void setSelectedCaptions(List<Caption> captions) {
+    _mapSelected((c) => c.copyWith(captions: captions));
+  }
+
+  /// Edits a single caption segment on the selected clip by index.
+  void updateSelectedCaption(int index, Caption caption) {
+    _mapSelected((c) {
+      if (index < 0 || index >= c.captions.length) return c;
+      final captions = [...c.captions];
+      captions[index] = caption;
+      return c.copyWith(captions: captions);
+    });
+  }
+
+  /// Removes a single caption segment from the selected clip by index.
+  void deleteSelectedCaption(int index) {
+    _mapSelected((c) {
+      if (index < 0 || index >= c.captions.length) return c;
+      final captions = [...c.captions]..removeAt(index);
+      return c.copyWith(captions: captions);
+    });
   }
 
   void _mapSelected(Clip Function(Clip) f) {
