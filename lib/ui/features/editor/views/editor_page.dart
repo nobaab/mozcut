@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/widgets/split_handle.dart';
 import '../view_models/editor_ui_state.dart';
 import 'browser_panel.dart';
+import 'editor_shortcuts.dart';
 import 'feature_rail.dart';
 import 'inspector_panel.dart';
 import 'player_panel.dart';
@@ -24,34 +25,36 @@ class EditorPage extends ConsumerWidget {
     final panels = ref.read(panelsProvider.notifier);
 
     return Scaffold(
-      body: Column(
-        children: [
-          const EditorTitleBar(),
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  width: sizes.left,
-                  child: Column(
-                    children: const [
-                      FeatureRail(),
-                      Expanded(child: BrowserPanel()),
-                    ],
+      body: EditorShortcuts(
+        child: Column(
+          children: [
+            const EditorTitleBar(),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: sizes.left,
+                    child: Column(
+                      children: const [
+                        FeatureRail(),
+                        Expanded(child: BrowserPanel()),
+                      ],
+                    ),
                   ),
-                ),
-                SplitHandle(axis: Axis.vertical, onDrag: panels.dragLeft),
-                const Expanded(child: PlayerPanel()),
-                SplitHandle(axis: Axis.vertical, onDrag: panels.dragRight),
-                SizedBox(
-                    width: sizes.right, child: const InspectorPanel()),
-              ],
+                  SplitHandle(axis: Axis.vertical, onDrag: panels.dragLeft),
+                  const Expanded(child: PlayerPanel()),
+                  SplitHandle(axis: Axis.vertical, onDrag: panels.dragRight),
+                  SizedBox(
+                      width: sizes.right, child: const InspectorPanel()),
+                ],
+              ),
             ),
-          ),
-          SplitHandle(axis: Axis.horizontal, onDrag: panels.dragTimeline),
-          const TimelineToolbar(),
-          SizedBox(height: sizes.timeline, child: const TimelinePanel()),
-        ],
+            SplitHandle(axis: Axis.horizontal, onDrag: panels.dragTimeline),
+            const TimelineToolbar(),
+            SizedBox(height: sizes.timeline, child: const TimelinePanel()),
+          ],
+        ),
       ),
     );
   }

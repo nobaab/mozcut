@@ -7,6 +7,7 @@ import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../view_models/editor_view_model.dart';
+import '../view_models/player_control.dart';
 
 /// The centre monitor, modelled on CapCut's Player: a "Player" header, the video
 /// in the middle, and a controls bar (timecode, play, fit, aspect, fullscreen).
@@ -54,6 +55,25 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
   @override
   Widget build(BuildContext context) {
     final selected = ref.watch(editorProvider.select((s) => s.selected));
+
+    // Keyboard shortcuts (Space, Left/Right arrow) send commands here rather
+    // than touching media_kit directly, since the Player lives in this
+    // State's private fields.
+    ref.listen<PlayerCommand?>(playerControlProvider, (previous, next) {
+      if (next == null || _loadedPath == null) return;
+      switch (next.type) {
+        case PlayerCommandType.togglePlayPause:
+          _player.playOrPause();
+          break;
+        case PlayerCommandType.seekBy:
+          final deltaMs = ((next.seconds ?? 0) * 1000).round();
+          final targetMs = (_position.inMilliseconds + deltaMs)
+              .clamp(0, _duration.inMilliseconds)
+              .toInt();
+          _player.seek(Duration(milliseconds: targetMs));
+          break;
+      }
+    });
 
     if (selected != null && selected.sourcePath != _loadedPath) {
       _loadedPath = selected.sourcePath;
