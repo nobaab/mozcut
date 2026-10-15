@@ -70,9 +70,17 @@ class EditorShortcuts extends ConsumerWidget {
       const SingleActivator(LogicalKeyboardKey.backspace): () =>
           ref.read(editorProvider.notifier).removeSelected(),
       const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): () =>
-          _undo(context),
+          _undo(context, ref),
       const SingleActivator(LogicalKeyboardKey.keyZ, control: true): () =>
-          _undo(context),
+          _undo(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
+          () => _redo(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyZ,
+          control: true, shift: true): () => _redo(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyY, control: true): () =>
+          _redo(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyY, meta: true): () =>
+          _redo(context, ref),
       const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
           ref.read(playerControlProvider.notifier).seekBy(-nudgeSeconds),
       const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
@@ -85,12 +93,28 @@ class EditorShortcuts extends ConsumerWidget {
     ref.read(editorProvider.notifier).splitSelectedAt(playhead);
   }
 
-  void _undo(BuildContext context) {
-    // No undo/redo stack exists yet — this is a placeholder so Cmd/Ctrl+Z
-    // does *something* sensible instead of being silently swallowed.
+  void _undo(BuildContext context, WidgetRef ref) {
+    final notifier = ref.read(editorProvider.notifier);
+    if (!notifier.canUndo) {
+      _showSnack(context, 'Nothing to undo');
+      return;
+    }
+    notifier.undo();
+  }
+
+  void _redo(BuildContext context, WidgetRef ref) {
+    final notifier = ref.read(editorProvider.notifier);
+    if (!notifier.canRedo) {
+      _showSnack(context, 'Nothing to redo');
+      return;
+    }
+    notifier.redo();
+  }
+
+  void _showSnack(BuildContext context, String message) {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
-      ..showSnackBar(const SnackBar(content: Text('Nothing to undo')));
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -109,6 +133,7 @@ void showEditorShortcutsDialog(BuildContext context) {
             _ShortcutRow('⌘/Ctrl + B, or S', 'Split clip at playhead'),
             _ShortcutRow('Delete / Backspace', 'Remove selected clip'),
             _ShortcutRow('⌘/Ctrl + Z', 'Undo'),
+            _ShortcutRow('⌘/Ctrl + Shift + Z, or Ctrl/⌘ + Y', 'Redo'),
             _ShortcutRow('← / →', 'Nudge playhead'),
           ],
         ),

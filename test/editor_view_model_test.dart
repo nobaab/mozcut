@@ -206,4 +206,134 @@ void main() {
       expect(() => editor.updateSelectedAudio(volume: 1.5), returnsNormally);
     });
   });
+
+  group('undo/redo', () {
+    test('starts with nothing to undo or redo', () {
+      expect(editor.canUndo, isFalse);
+      expect(editor.canRedo, isFalse);
+    });
+
+    test('undo restores the state from before a mutation', () {
+      final id = clipAt(0).id;
+      editor.setTrim(id, inPoint: 3);
+      expect(clipAt(0).inPoint, 3);
+
+      expect(editor.canUndo, isTrue);
+      editor.undo();
+
+      expect(clipAt(0).inPoint, 0);
+      expect(container.read(editorProvider).clips.length, 3);
+    });
+
+    test('redo re-applies a mutation that was undone', () {
+      final id = clipAt(0).id;
+      editor.setTrim(id, inPoint: 3);
+      editor.undo();
+      expect(clipAt(0).inPoint, 0);
+
+      expect(editor.canRedo, isTrue);
+      editor.redo();
+      expect(clipAt(0).inPoint, 3);
+    });
+
+    test('undo on removeSelected restores the removed clip', () {
+      editor.select(clipAt(0).id);
+      editor.removeSelected();
+      expect(container.read(editorProvider).clips.length, 2);
+
+      editor.undo();
+      final names = container
+          .read(editorProvider)
+          .clips
+          .map((c) => c.fileName)
+          .toList();
+      expect(names, ['a.mp4', 'b.mp4', 'c.mp4']);
+    });
+
+    test('a new mutation after undo clears the redo stack', () {
+      final id = clipAt(0).id;
+      editor.setTrim(id, inPoint: 3);
+      editor.undo();
+      expect(editor.canRedo, isTrue);
+
+      editor.setTrim(id, inPoint: 5);
+      expect(editor.canRedo, isFalse);
+    });
+
+    test('undo is a no-op when there is nothing to undo', () {
+      expect(editor.canUndo, isFalse);
+      editor.undo();
+      final names = container
+          .read(editorProvider)
+          .clips
+          .map((c) => c.fileName)
+          .toList();
+      expect(names, ['a.mp4', 'b.mp4', 'c.mp4']);
+    });
+
+    test('redo is a no-op when there is nothing to redo', () {
+      editor.setTrim(clipAt(0).id, inPoint: 3);
+      editor.redo();
+      expect(clipAt(0).inPoint, 3);
+    });
+
+    test('a no-op mutation (invalid id/index) does not push undo history',
+        () {
+      editor.setTrim('does-not-exist', inPoint: 5);
+      expect(editor.canUndo, isFalse);
+
+      editor.reorder(99, 0);
+      expect(editor.canUndo, isFalse);
+    });
+
+    test('selecting a clip is not itself undoable', () {
+      editor.select(clipAt(1).id);
+      expect(editor.canUndo, isFalse);
+    });
+
+    test('later mutation does not corrupt an earlier undo snapshot', () {
+      final id = clipAt(0).id;
+      editor.setTrim(id, inPoint: 1);
+      editor.setTrim(id, inPoint: 2);
+      editor.setTrim(id, inPoint: 3);
+      expect(clipAt(0).inPoint, 3);
+
+      editor.undo(); // back to inPoint 2
+      editor.undo(); // back to inPoint 1
+      expect(clipAt(0).inPoint, 1);
+
+      editor.redo(); // forward to inPoint 2
+      expect(clipAt(0).inPoint, 2);
+    });
+
+    test('undo stack is capped so it cannot grow without bound', () {
+      final id = clipAt(0).id;
+      // One more than the cap (100): every call is a distinct, valid trim so
+      // each one pushes history.
+      for (var i = 0; i < 150; i++) {
+        editor.setTrim(id, inPoint: (i % 9) * 0.5 + 0.1);
+      }
+      for (var i = 0; i < 150; i++) {
+        editor.undo();
+      }
+      // The stack was capped at 100 entries, so after undoing far more than
+      // that there's nothing left to undo.
+      expect(editor.canUndo, isFalse);
+    });
+
+    test('loadClips resets undo/redo history', () {
+      editor.setTrim(clipAt(0).id, inPoint: 3);
+      expect(editor.canUndo, isTrue);
+
+      editor.loadClips([Clip(sourcePath: '/d.mp4', sourceDuration: 5)]);
+      expect(editor.canUndo, isFalse);
+      expect(editor.canRedo, isFalse);
+
+      // And undo() afterwards is a no-op — it must not resurrect the
+      // previous project's clips.
+      editor.undo();
+      expect(container.read(editorProvider).clips.length, 1);
+      expect(clipAt(0).fileName, 'd.mp4');
+    });
+  });
 }

@@ -35,11 +35,74 @@ class EditorState {
 
 @Riverpod(keepAlive: true)
 class Editor extends _$Editor {
+  /// How many snapshots [_undoStack] (and, defensively, [_redoStack]) may
+  /// hold before the oldest entry is dropped.
+  static const int _historyLimit = 100;
+
+  /// States to restore on [undo], most-recent last.
+  final List<EditorState> _undoStack = [];
+
+  /// States to restore on [redo], most-recent last. Cleared by any new
+  /// mutation — once you branch off into a new edit, the old "future" is
+  /// gone, same as every other undo/redo implementation.
+  final List<EditorState> _redoStack = [];
+
   @override
   EditorState build() => const EditorState();
 
-  /// Replaces the timeline with a project's clips (used when opening a project).
+  bool get canUndo => _undoStack.isNotEmpty;
+  bool get canRedo => _redoStack.isNotEmpty;
+
+  /// Deep-clones [s] for storage on the undo/redo stacks.
+  ///
+  /// [EditorState.clips] is a fresh `List` on every mutation, but [Clip]
+  /// itself has non-`final` fields (trim points, transform) — nothing in
+  /// this file mutates them in place today (everything goes through
+  /// [Clip.copyWith]), but a snapshot shouldn't silently depend on that
+  /// staying true forever. Cloning each [Clip] (and its caption list, same
+  /// reasoning) means the stacks own independent copies that a later
+  /// mutation — in-place or not — can never reach back and corrupt.
+  EditorState _snapshot(EditorState s) => EditorState(
+        clips: s.clips.map(_cloneClip).toList(growable: false),
+        selectedId: s.selectedId,
+      );
+
+  Clip _cloneClip(Clip c) => c.copyWith(captions: List.of(c.captions));
+
+  /// Routes a state change through undo history: snapshots the current state
+  /// onto the undo stack (capped at [_historyLimit]), clears the redo stack,
+  /// then applies [f]. Every content-mutating method below goes through this
+  /// single chokepoint instead of duplicating the push logic.
+  void _mutate(EditorState Function(EditorState) f) {
+    _undoStack.add(_snapshot(state));
+    if (_undoStack.length > _historyLimit) _undoStack.removeAt(0);
+    _redoStack.clear();
+    state = f(state);
+  }
+
+  /// Reverts to the state before the last mutation. No-op if there is none.
+  void undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_snapshot(state));
+    if (_redoStack.length > _historyLimit) _redoStack.removeAt(0);
+    state = _undoStack.removeLast();
+  }
+
+  /// Re-applies the last state undone by [undo]. No-op if there is none.
+  void redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_snapshot(state));
+    if (_undoStack.length > _historyLimit) _undoStack.removeAt(0);
+    state = _redoStack.removeLast();
+  }
+
+  /// Replaces the timeline with a project's clips (used when opening a
+  /// project). This resets undo/redo history rather than being undoable
+  /// itself — "undo" after opening a different project shouldn't resurrect
+  /// whatever was on the timeline before it.
   void loadClips(List<Clip> clips) {
+    _undoStack.clear();
+    _redoStack.clear();
     state = EditorState(
       clips: List.of(clips),
       selectedId: clips.isEmpty ? null : clips.first.id,
@@ -49,12 +112,16 @@ class Editor extends _$Editor {
   Future<void> addClip(String path) async {
     final duration = await ref.read(engineProvider).probeDuration(path);
     final clip = Clip(sourcePath: path, sourceDuration: duration);
-    state = state.copyWith(
-      clips: [...state.clips, clip],
-      selectedId: clip.id,
-    );
+    _mutate((s) => s.copyWith(
+          clips: [...s.clips, clip],
+          selectedId: clip.id,
+        ));
   }
 
+  // Selection is navigation, not content, so it isn't pushed onto the undo
+  // stack — same treatment as the playhead. Undoing a selection the user
+  // just made (rather than the edit they made before it) would be
+  // surprising.
   void select(String id) => state = state.copyWith(selectedId: id);
 
   /// Moves the clip at [oldIndex] to [newIndex] on the single track.
@@ -63,10 +130,12 @@ class Editor extends _$Editor {
   /// `reorder(0, 2)`. Used by drag-to-reorder on the timeline.
   void reorder(int oldIndex, int newIndex) {
     if (oldIndex < 0 || oldIndex >= state.clips.length) return;
-    final clips = [...state.clips];
-    final clip = clips.removeAt(oldIndex);
-    clips.insert(newIndex.clamp(0, clips.length), clip);
-    state = state.copyWith(clips: clips);
+    _mutate((s) {
+      final clips = [...s.clips];
+      final clip = clips.removeAt(oldIndex);
+      clips.insert(newIndex.clamp(0, clips.length), clip);
+      return s.copyWith(clips: clips);
+    });
   }
 
   /// Sets the trim in/out of the clip with [id] (source seconds), clamped to
@@ -75,32 +144,36 @@ class Editor extends _$Editor {
   void setTrim(String id, {double? inPoint, double? outPoint}) {
     final idx = state.clips.indexWhere((c) => c.id == id);
     if (idx < 0) return;
-    final clips = [...state.clips];
-    final c = clips[idx];
-    var newIn = (inPoint ?? c.inPoint).clamp(0.0, c.sourceDuration);
-    var newOut = (outPoint ?? c.outPoint).clamp(0.0, c.sourceDuration);
-    const minLength = 0.1;
-    if (newOut - newIn < minLength) {
-      if (inPoint != null) {
-        // Dragging the left handle: don't let it pass the right edge.
-        newIn = (newOut - minLength).clamp(0.0, c.sourceDuration);
-      } else {
-        // Dragging the right handle: don't let it pass the left edge.
-        newOut = (newIn + minLength).clamp(0.0, c.sourceDuration);
+    _mutate((s) {
+      final clips = [...s.clips];
+      final c = clips[idx];
+      var newIn = (inPoint ?? c.inPoint).clamp(0.0, c.sourceDuration);
+      var newOut = (outPoint ?? c.outPoint).clamp(0.0, c.sourceDuration);
+      const minLength = 0.1;
+      if (newOut - newIn < minLength) {
+        if (inPoint != null) {
+          // Dragging the left handle: don't let it pass the right edge.
+          newIn = (newOut - minLength).clamp(0.0, c.sourceDuration);
+        } else {
+          // Dragging the right handle: don't let it pass the left edge.
+          newOut = (newIn + minLength).clamp(0.0, c.sourceDuration);
+        }
       }
-    }
-    clips[idx] = c.copyWith(inPoint: newIn, outPoint: newOut);
-    state = state.copyWith(clips: clips);
+      clips[idx] = c.copyWith(inPoint: newIn, outPoint: newOut);
+      return s.copyWith(clips: clips);
+    });
   }
 
   void removeSelected() {
     final id = state.selectedId;
     if (id == null) return;
-    final remaining = state.clips.where((c) => c.id != id).toList();
-    state = EditorState(
-      clips: remaining,
-      selectedId: remaining.isEmpty ? null : remaining.last.id,
-    );
+    _mutate((s) {
+      final remaining = s.clips.where((c) => c.id != id).toList();
+      return EditorState(
+        clips: remaining,
+        selectedId: remaining.isEmpty ? null : remaining.last.id,
+      );
+    });
   }
 
   /// Sets the trim in/out of the selected clip. Points are source seconds.
@@ -122,20 +195,22 @@ class Editor extends _$Editor {
         sourceSeconds >= c.outPoint - 0.05) {
       return; // split point outside the usable region
     }
-    // Captions were timed against the old in/out window, so they no longer
-    // line up once it is split in two — drop them rather than show stale
-    // text. Regenerate per-half if needed.
-    final left = c.copyWith(outPoint: sourceSeconds, captions: const []);
-    final right = Clip(
-      sourcePath: c.sourcePath,
-      sourceDuration: c.sourceDuration,
-      inPoint: sourceSeconds,
-      outPoint: c.outPoint,
-    );
-    final clips = [...state.clips]
-      ..removeAt(idx)
-      ..insertAll(idx, [left, right]);
-    state = state.copyWith(clips: clips, selectedId: left.id);
+    _mutate((s) {
+      // Captions were timed against the old in/out window, so they no longer
+      // line up once it is split in two — drop them rather than show stale
+      // text. Regenerate per-half if needed.
+      final left = c.copyWith(outPoint: sourceSeconds, captions: const []);
+      final right = Clip(
+        sourcePath: c.sourcePath,
+        sourceDuration: c.sourceDuration,
+        inPoint: sourceSeconds,
+        outPoint: c.outPoint,
+      );
+      final clips = [...s.clips]
+        ..removeAt(idx)
+        ..insertAll(idx, [left, right]);
+      return s.copyWith(clips: clips, selectedId: left.id);
+    });
   }
 
   /// Sets the playback speed of the selected clip, clamped to a sane range
@@ -214,9 +289,11 @@ class Editor extends _$Editor {
   void _mapSelected(Clip Function(Clip) f) {
     final idx = state.selectedIndex;
     if (idx < 0) return;
-    final clips = [...state.clips];
-    clips[idx] = f(clips[idx]);
-    state = state.copyWith(clips: clips);
+    _mutate((s) {
+      final clips = [...s.clips];
+      clips[idx] = f(clips[idx]);
+      return s.copyWith(clips: clips);
+    });
   }
 }
 

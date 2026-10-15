@@ -7,14 +7,22 @@ import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 
 /// The strip of tools above the timeline, modelled on CapCut: edit tools on the
-/// left, zoom on the right. Split/Delete are wired; the rest are placeholders.
+/// left, zoom on the right. Undo/Redo/Split/Delete are wired; the rest are
+/// placeholders.
 class TimelineToolbar extends ConsumerWidget {
   const TimelineToolbar({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final editor = ref.read(editorProvider.notifier);
+    // canUndo/canRedo live on the notifier, not EditorState, so watch the
+    // whole provider to rebuild whenever they might have changed (every
+    // state assignment is a new EditorState instance, so this never misses
+    // one).
+    ref.watch(editorProvider);
     final hasSel = ref.watch(editorProvider.select((s) => s.selected != null));
+    final canUndo = editor.canUndo;
+    final canRedo = editor.canRedo;
     final zoom = ref.watch(timelineZoomProvider);
 
     return Container(
@@ -31,8 +39,10 @@ class TimelineToolbar extends ConsumerWidget {
         children: [
           _tool(context, Icons.near_me, 'Select'),
           _divider(),
-          _tool(context, Icons.undo, 'Undo'),
-          _tool(context, Icons.redo, 'Redo'),
+          _tool(context, Icons.undo, 'Undo',
+              onTap: canUndo ? editor.undo : null),
+          _tool(context, Icons.redo, 'Redo',
+              onTap: canRedo ? editor.redo : null),
           _divider(),
           _tool(context, Icons.content_cut, 'Split',
               onTap: hasSel
@@ -71,8 +81,10 @@ class TimelineToolbar extends ConsumerWidget {
   Widget _tool(BuildContext context, IconData icon, String tip,
       {VoidCallback? onTap}) {
     // A null onTap for a placeholder still shows a "coming soon" note; a null
-    // onTap for a real-but-disabled action (no selection) greys it out.
-    final isPlaceholder = tip != 'Split' && tip != 'Delete';
+    // onTap for a real-but-disabled action (no selection, or nothing to
+    // undo/redo) greys it out.
+    const wired = {'Split', 'Delete', 'Undo', 'Redo'};
+    final isPlaceholder = !wired.contains(tip);
     return VIconButton(
       icon: icon,
       tooltip: tip,
