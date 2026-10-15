@@ -5,10 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_colors.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
+import 'captions_panel.dart';
 
-/// The left browser: its content depends on the active feature tab. Only the
-/// media (Import) browser is wired today; the rest are present as panels with
-/// their shape sketched in, ready to be filled.
+/// The left browser: its content depends on the active feature tab. The media
+/// (Import) and Captions browsers are wired; the rest are present as panels
+/// with their shape sketched in, ready to be filled.
 class BrowserPanel extends ConsumerWidget {
   const BrowserPanel({super.key});
 
@@ -17,9 +18,11 @@ class BrowserPanel extends ConsumerWidget {
     final tab = ref.watch(leftTabProvider);
     return Container(
       color: AppColors.panel,
-      child: tab == EditorLeftTab.media
-          ? const _MediaBrowser()
-          : _Placeholder(tab: tab),
+      child: switch (tab) {
+        EditorLeftTab.media => const _MediaBrowser(),
+        EditorLeftTab.captions => const CaptionsPanel(),
+        _ => _Placeholder(tab: tab),
+      },
     );
   }
 }
