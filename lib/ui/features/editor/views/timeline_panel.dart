@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../domain/models/clip.dart';
+import '../../../core/widgets/panel.dart';
 import '../view_models/editor_view_model.dart';
 
 /// The timeline: each clip is a bar whose width is proportional to its trimmed
@@ -16,13 +17,13 @@ class TimelinePanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(editorProvider);
 
-    return Container(
-      height: 120,
-      color: const Color(0xFF131418),
+    return Panel(
+      title: 'Timeline',
+      padBody: false,
       child: state.clips.isEmpty
           ? const Center(
               child: Text(
-                'Timeline — imported clips show up here',
+                'Imported clips show up here',
                 style: TextStyle(color: Colors.white24),
               ),
             )

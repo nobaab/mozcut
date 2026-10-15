@@ -34,7 +34,7 @@ void main() {
         child: MaterialApp(home: Scaffold(body: TimelinePanel())),
       ),
     );
-    expect(find.textContaining('imported clips show up here'), findsOneWidget);
+    expect(find.textContaining('clips show up here'), findsOneWidget);
   });
 
   testWidgets('adding a clip renders a bar on the timeline', (tester) async {

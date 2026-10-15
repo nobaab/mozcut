@@ -4,27 +4,59 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../data/engine/ffmpeg_engine.dart';
 import '../../../core/app_colors.dart';
-import '../../../core/widgets/toolbar_button.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
+import 'inspector_panel.dart';
+import 'media_panel.dart';
 import 'preview_panel.dart';
 import 'timeline_panel.dart';
 
+/// The editor shell: a classic NLE layout — media bin on the left, the monitor
+/// in the centre, the inspector on the right, and the timeline across the
+/// bottom. Modelled on Concat's default dock.
 class EditorPage extends ConsumerWidget {
   const EditorPage({super.key});
+
+  static const _mediaWidth = 230.0;
+  static const _inspectorWidth = 288.0;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: _Toolbar(),
-      body: const Column(
+      body: Column(
         children: [
-          Expanded(child: PreviewPanel()),
-          TimelinePanel(),
+          Expanded(
+            child: Row(
+              children: const [
+                SizedBox(width: _mediaWidth, child: MediaPanel()),
+                _VDivider(),
+                Expanded(child: PreviewPanel()),
+                _VDivider(),
+                SizedBox(width: _inspectorWidth, child: InspectorPanel()),
+              ],
+            ),
+          ),
+          const _HDivider(),
+          const SizedBox(height: 190, child: TimelinePanel()),
         ],
       ),
     );
   }
+}
+
+class _VDivider extends StatelessWidget {
+  const _VDivider();
+  @override
+  Widget build(BuildContext context) =>
+      const VerticalDivider(width: 1, thickness: 1, color: AppColors.line);
+}
+
+class _HDivider extends StatelessWidget {
+  const _HDivider();
+  @override
+  Widget build(BuildContext context) =>
+      const Divider(height: 1, thickness: 1, color: AppColors.line);
 }
 
 class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
@@ -35,9 +67,7 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(editorProvider);
     final progress = ref.watch(exportProgressProvider);
-    final hasSelection = state.selected != null;
     final exporting = progress != null;
-
     final projectName = ref.watch(appProvider)?.name ?? 'Vidkaat';
 
     return AppBar(
@@ -57,60 +87,10 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
           Text(projectName,
               style:
                   const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-          const SizedBox(width: 20),
-          ToolbarButton(
-            icon: Icons.add,
-            label: 'Import',
-            onPressed: exporting ? null : () => _import(context, ref),
-          ),
-          ToolbarButton(
-            icon: Icons.content_cut,
-            label: 'Split',
-            onPressed: hasSelection && !exporting
-                ? () => ref
-                    .read(editorProvider.notifier)
-                    .splitSelectedAt(ref.read(playheadProvider))
-                : null,
-          ),
-          ToolbarButton(
-            icon: Icons.first_page,
-            label: 'Set In',
-            onPressed: hasSelection && !exporting
-                ? () => ref
-                    .read(editorProvider.notifier)
-                    .trimSelected(inPoint: ref.read(playheadProvider))
-                : null,
-          ),
-          ToolbarButton(
-            icon: Icons.last_page,
-            label: 'Set Out',
-            onPressed: hasSelection && !exporting
-                ? () => ref
-                    .read(editorProvider.notifier)
-                    .trimSelected(outPoint: ref.read(playheadProvider))
-                : null,
-          ),
-          ToolbarButton(
-            icon: Icons.delete_outline,
-            label: 'Delete',
-            onPressed: hasSelection && !exporting
-                ? () => ref.read(editorProvider.notifier).removeSelected()
-                : null,
-          ),
-          ToolbarButton(
-            icon: Icons.save_outlined,
-            label: 'Save',
-            onPressed: exporting
-                ? null
-                : () async {
-                    await ref.read(appProvider.notifier).saveCurrent();
-                    if (context.mounted) _snack(context, 'Project saved');
-                  },
-          ),
           const Spacer(),
           if (exporting)
             SizedBox(
-              width: 160,
+              width: 180,
               child: Row(
                 children: [
                   Expanded(child: LinearProgressIndicator(value: progress)),
@@ -119,35 +99,28 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
                 ],
               ),
             )
-          else
+          else ...[
+            TextButton.icon(
+              icon: const Icon(Icons.save_outlined, size: 18),
+              label: const Text('Save'),
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
+              onPressed: () async {
+                await ref.read(appProvider.notifier).saveCurrent();
+                if (context.mounted) _snack(context, 'Project saved');
+              },
+            ),
+            const SizedBox(width: 4),
             FilledButton.icon(
               icon: const Icon(Icons.file_upload_outlined, size: 18),
               label: const Text('Export'),
               onPressed:
                   state.clips.isEmpty ? null : () => _export(context, ref),
             ),
+          ],
           const SizedBox(width: 12),
         ],
       ),
     );
-  }
-
-  Future<void> _import(BuildContext context, WidgetRef ref) async {
-    // Non-sandboxed macOS app: skip file_picker's own entitlement checks.
-    await FilePicker.skipEntitlementsChecks();
-    final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'],
-    );
-    for (final f in files) {
-      final path = f.path;
-      if (path == null) continue;
-      try {
-        await ref.read(editorProvider.notifier).addClip(path);
-      } catch (e) {
-        if (context.mounted) _snack(context, 'Could not import ${f.name}: $e');
-      }
-    }
   }
 
   Future<void> _export(BuildContext context, WidgetRef ref) async {
