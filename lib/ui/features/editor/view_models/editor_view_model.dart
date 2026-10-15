@@ -320,6 +320,22 @@ class Editor extends _$Editor {
     _mapSelected((c) => c.copyWith(filterId: filterId, clearFilterId: filterId == null));
   }
 
+  // ── transition ──
+
+  /// Sets (or, passing null, clears) the transition that plays entering the
+  /// selected clip from the previous one ([Clip.transitionId]), optionally
+  /// updating its length ([Clip.transitionDuration], clamped to a sane 0.05–
+  /// 5s range). [transitionId] should be a key of `kTransitionPresets` (see
+  /// transition_presets.dart) or null; [duration] may be passed with either a
+  /// set or a clear, or omitted to leave it unchanged.
+  void setSelectedTransition(String? transitionId, {double? duration}) {
+    _mapSelected((c) => c.copyWith(
+          transitionId: transitionId,
+          clearTransitionId: transitionId == null,
+          transitionDuration: duration?.clamp(0.05, 5.0).toDouble(),
+        ));
+  }
+
   void _mapSelected(Clip Function(Clip) f) {
     final idx = state.selectedIndex;
     if (idx < 0) return;

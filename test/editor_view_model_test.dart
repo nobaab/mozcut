@@ -424,4 +424,48 @@ void main() {
       expect(() => editor.setSelectedFilter('Noir'), returnsNormally);
     });
   });
+
+  group('setSelectedTransition', () {
+    test('sets the transition on the selected clip', () {
+      editor.setSelectedTransition('Dissolve');
+      expect(clipAt(0).transitionId, 'Dissolve');
+    });
+
+    test('leaves transitionDuration at its default when none is given', () {
+      editor.setSelectedTransition('Dissolve');
+      expect(clipAt(0).transitionDuration, 0.5);
+    });
+
+    test('sets the duration alongside the transition when given', () {
+      editor.setSelectedTransition('Push', duration: 1.5);
+      expect(clipAt(0).transitionId, 'Push');
+      expect(clipAt(0).transitionDuration, 1.5);
+    });
+
+    test('clamps an out-of-range duration', () {
+      editor.setSelectedTransition('Push', duration: 50.0);
+      expect(clipAt(0).transitionDuration, 5.0);
+      editor.setSelectedTransition('Push', duration: -1.0);
+      expect(clipAt(0).transitionDuration, 0.05);
+    });
+
+    test('clears the transition when passed null', () {
+      editor.setSelectedTransition('Dissolve');
+      editor.setSelectedTransition(null);
+      expect(clipAt(0).transitionId, isNull);
+    });
+
+    test('does not affect other clips', () {
+      editor.setSelectedTransition('Zoom');
+      expect(clipAt(1).transitionId, isNull);
+      expect(clipAt(2).transitionId, isNull);
+    });
+
+    test('does nothing when no clip is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.setSelectedTransition('Dissolve'), returnsNormally);
+    });
+  });
 }
