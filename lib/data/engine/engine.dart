@@ -27,6 +27,20 @@ abstract class Engine {
     void Function(double progress)? onProgress,
   });
 
+  /// Renders a small/fast proxy of the *whole timeline* — the same edit
+  /// [export] would produce (per-clip transform/speed/audio, concatenated in
+  /// order, captions and [textOverlays] burned in) but at low resolution and
+  /// encoder effort, so it renders in a fraction of the time. Used to drive a
+  /// WYSIWYG player preview instead of showing just one clip's raw source.
+  /// Returns the path to the rendered temp MP4. Reports 0..1 progress via
+  /// [onProgress]. Throws [EngineException] if [clips] is empty or ffmpeg
+  /// fails.
+  Future<String> renderPreview({
+    required List<Clip> clips,
+    List<TextOverlay> textOverlays = const [],
+    void Function(double progress)? onProgress,
+  });
+
   /// Writes a single JPEG frame from [clip] (at its in-point) to [outputPath],
   /// scaled to [width]. Used for project poster thumbnails. Best-effort.
   Future<void> savePoster({
