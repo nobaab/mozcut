@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../../domain/models/project.dart';
+import '../../../core/widgets/buttons.dart';
+import '../../../core/widgets/chips.dart';
 import '../view_models/launcher_view_model.dart';
 
 /// A preset "video mode": one choice that bundles resolution + fps + aspect,
@@ -162,9 +164,9 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                OutlinedButton(
+                VButton(
+                  label: 'Choose',
                   onPressed: _busy ? null : _chooseLocation,
-                  child: const Text('Choose'),
                 ),
               ],
             ),
@@ -179,22 +181,21 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
               runSpacing: 8,
               children: [
                 for (var i = 0; i < _presets.length; i++)
-                  ChoiceChip(
-                    avatar: Icon(_presets[i].icon, size: 18),
-                    label: Text(_presets[i].label),
+                  VChip(
+                    icon: _presets[i].icon,
+                    label: _presets[i].label,
                     selected: !_custom && _presetIndex == i,
-                    onSelected: _busy
+                    onTap: _busy
                         ? null
-                        : (_) => setState(() {
+                        : () => setState(() {
                               _custom = false;
                               _presetIndex = i;
                             }),
                   ),
-                ChoiceChip(
-                  label: const Text('Custom'),
+                VChip(
+                  label: 'Custom',
                   selected: _custom,
-                  onSelected:
-                      _busy ? null : (_) => setState(() => _custom = true),
+                  onTap: _busy ? null : () => setState(() => _custom = true),
                 ),
               ],
             ),
@@ -248,14 +249,16 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                TextButton(
+                VButton(
+                  label: 'Cancel',
+                  variant: VButtonVariant.ghost,
                   onPressed: _busy ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
                 ),
                 const SizedBox(width: 8),
-                FilledButton(
+                VButton(
+                  label: _busy ? 'Creating…' : 'Create',
+                  variant: VButtonVariant.primary,
                   onPressed: _canCreate ? _create : null,
-                  child: Text(_busy ? 'Creating…' : 'Create'),
                 ),
               ],
             ),

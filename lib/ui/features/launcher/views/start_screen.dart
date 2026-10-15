@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../data/project/project_store.dart';
 import '../../../../domain/models/project.dart';
+import '../../../core/widgets/buttons.dart';
 import '../view_models/launcher_view_model.dart';
 import 'new_project_dialog.dart';
 
@@ -37,9 +38,9 @@ class StartScreen extends ConsumerWidget {
                       style: TextStyle(
                           fontSize: 20, fontWeight: FontWeight.w700)),
                   const Spacer(),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.folder_open, size: 18),
-                    label: const Text('Open from disk'),
+                  VButton(
+                    label: 'Open from disk',
+                    icon: Icons.folder_open,
                     onPressed: () => _openFromDisk(context, ref),
                   ),
                 ],

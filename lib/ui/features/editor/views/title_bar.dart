@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../data/engine/ffmpeg_engine.dart';
 import '../../../core/app_colors.dart';
+import '../../../core/widgets/buttons.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
 
@@ -32,8 +33,8 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back, size: 20),
+          VIconButton(
+            icon: Icons.arrow_back,
             tooltip: 'Save & back to projects',
             onPressed: exporting
                 ? null
@@ -44,10 +45,20 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
               style:
                   const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
           const Spacer(),
-          _ghost(context, Icons.grid_view, 'Layout'),
-          _pill(context, Icons.keyboard_outlined, 'Shortcuts'),
+          VIconButton(
+              icon: Icons.grid_view,
+              tooltip: 'Layout',
+              onPressed: () => _soon(context, 'Layout')),
+          const SizedBox(width: 4),
+          VButton(
+              label: 'Shortcuts',
+              icon: Icons.keyboard_outlined,
+              onPressed: () => _soon(context, 'Shortcuts')),
           const SizedBox(width: 8),
-          _pill(context, Icons.ios_share, 'Share'),
+          VButton(
+              label: 'Share',
+              icon: Icons.ios_share,
+              onPressed: () => _soon(context, 'Share')),
           const SizedBox(width: 8),
           if (exporting)
             SizedBox(
@@ -62,13 +73,10 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
               ),
             )
           else
-            FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-              ),
-              icon: const Icon(Icons.file_upload_outlined, size: 18),
-              label: const Text('Export'),
+            VButton(
+              label: 'Export',
+              icon: Icons.file_upload_outlined,
+              variant: VButtonVariant.primary,
               onPressed: hasClips ? () => _export(context, ref) : null,
             ),
           const SizedBox(width: 4),
@@ -76,24 +84,6 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
       ),
     );
   }
-
-  Widget _ghost(BuildContext context, IconData icon, String tip) => IconButton(
-        icon: Icon(icon, size: 18),
-        tooltip: tip,
-        onPressed: () => _soon(context, tip),
-      );
-
-  Widget _pill(BuildContext context, IconData icon, String label) =>
-      TextButton.icon(
-        icon: Icon(icon, size: 16),
-        label: Text(label),
-        style: TextButton.styleFrom(
-          foregroundColor: Colors.white,
-          backgroundColor: Colors.white.withValues(alpha: 0.06),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        ),
-        onPressed: () => _soon(context, label),
-      );
 
   void _soon(BuildContext context, String what) =>
       ScaffoldMessenger.of(context)

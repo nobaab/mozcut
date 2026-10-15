@@ -4,6 +4,8 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../core/app_colors.dart';
+import '../../../core/widgets/buttons.dart';
+import '../../../core/widgets/chips.dart';
 import '../view_models/editor_view_model.dart';
 
 /// The centre monitor, modelled on CapCut's Player: a "Player" header, the video
@@ -140,22 +142,20 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     );
   }
 
-  Widget _ctl(IconData icon, String tip) => IconButton(
-        icon: Icon(icon, size: 18),
+  Widget _ctl(IconData icon, String tip) => VIconButton(
+        icon: icon,
         tooltip: tip,
-        visualDensity: VisualDensity.compact,
         onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('$tip — coming soon'))),
       );
 
-  Widget _customChip() => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          border: Border.all(color: AppColors.line),
-          borderRadius: BorderRadius.circular(4),
+  Widget _customChip() => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: VChip(
+          label: 'Custom',
+          onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Aspect ratio — coming soon'))),
         ),
-        child: const Text('Custom', style: TextStyle(fontSize: 11)),
       );
 
   /// HH:MM:SS:FF at 30 fps — CapCut's timecode shape.

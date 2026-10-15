@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_colors.dart';
+import '../../../core/widgets/buttons.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 
@@ -72,10 +73,9 @@ class TimelineToolbar extends ConsumerWidget {
     // A null onTap for a placeholder still shows a "coming soon" note; a null
     // onTap for a real-but-disabled action (no selection) greys it out.
     final isPlaceholder = tip != 'Split' && tip != 'Delete';
-    return IconButton(
-      icon: Icon(icon, size: 18),
+    return VIconButton(
+      icon: icon,
       tooltip: tip,
-      visualDensity: VisualDensity.compact,
       onPressed: onTap ??
           (isPlaceholder
               ? () => ScaffoldMessenger.of(context).showSnackBar(
