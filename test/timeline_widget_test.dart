@@ -17,6 +17,13 @@ class FakeEngine implements Engine {
     required String outputPath,
     void Function(double)? onProgress,
   }) async {}
+
+  @override
+  Future<void> savePoster({
+    required Clip clip,
+    required String outputPath,
+    int width = 480,
+  }) async {}
 }
 
 void main() {

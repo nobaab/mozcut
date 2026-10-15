@@ -42,4 +42,20 @@ class Clip {
         inPoint: inPoint ?? this.inPoint,
         outPoint: outPoint ?? this.outPoint,
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'sourcePath': sourcePath,
+        'sourceDuration': sourceDuration,
+        'inPoint': inPoint,
+        'outPoint': outPoint,
+      };
+
+  factory Clip.fromJson(Map<String, dynamic> json) => Clip(
+        id: json['id'] as String?,
+        sourcePath: json['sourcePath'] as String,
+        sourceDuration: (json['sourceDuration'] as num).toDouble(),
+        inPoint: (json['inPoint'] as num?)?.toDouble(),
+        outPoint: (json['outPoint'] as num?)?.toDouble(),
+      );
 }

@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../state/app_state.dart';
 import '../state/editor_state.dart';
 import 'preview_panel.dart';
 import 'timeline_panel.dart';
@@ -34,13 +35,23 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
     final hasSelection = state.selected != null;
     final exporting = progress != null;
 
+    final projectName = ref.watch(appProvider)?.name ?? 'Vidkaat';
+
     return AppBar(
       backgroundColor: const Color(0xFF1F2026),
-      titleSpacing: 12,
+      titleSpacing: 8,
       title: Row(
         children: [
-          const Text('Vidkaat',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+          Tooltip(
+            message: 'Save & back to projects',
+            child: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed:
+                  exporting ? null : () => ref.read(appProvider.notifier).closeToStart(),
+            ),
+          ),
+          Text(projectName,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
           const SizedBox(width: 20),
           _Btn(
             icon: Icons.add,
@@ -80,6 +91,16 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
             onPressed: hasSelection && !exporting
                 ? () => ref.read(editorProvider.notifier).removeSelected()
                 : null,
+          ),
+          _Btn(
+            icon: Icons.save_outlined,
+            label: 'Save',
+            onPressed: exporting
+                ? null
+                : () async {
+                    await ref.read(appProvider.notifier).saveCurrent();
+                    if (context.mounted) _snack(context, 'Project saved');
+                  },
           ),
           const Spacer(),
           if (exporting)

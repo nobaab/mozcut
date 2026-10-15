@@ -19,6 +19,14 @@ abstract class Engine {
     required String outputPath,
     void Function(double progress)? onProgress,
   });
+
+  /// Writes a single JPEG frame from [clip] (at its in-point) to [outputPath],
+  /// scaled to [width]. Used for project poster thumbnails. Best-effort.
+  Future<void> savePoster({
+    required Clip clip,
+    required String outputPath,
+    int width = 480,
+  });
 }
 
 class EngineException implements Exception {

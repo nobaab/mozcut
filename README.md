@@ -37,6 +37,7 @@ codebase, same app everywhere.
 
 ## ✨ Features
 
+- 🗂️ **Project launcher** — create, save and reopen projects from a recent-projects grid with poster thumbnails (like CapCut / DaVinci)
 - 🎬 **Import** video files — mp4, mov, mkv, webm, avi, m4v
 - ▶️ **Preview** with play / pause / frame-accurate scrubbing
 - ✂️ **Split** a clip at the playhead
@@ -91,6 +92,8 @@ flutter test --tags integration   # real ffmpeg end-to-end tests
 
 ## 🗺️ Roadmap
 
+- [x] Project launcher: new project, recent-projects grid, open/save `vidkaat.json`
+- [ ] Project launcher extras: templates row, grid/list toggle, sort, rename/duplicate
 - [ ] Full timeline-sequence preview (not just one clip at a time)
 - [ ] Drag to reorder / trim clips directly on the timeline
 - [ ] Auto-captions (local Whisper)

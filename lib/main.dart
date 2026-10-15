@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'state/app_state.dart';
 import 'ui/editor_page.dart';
+import 'ui/start_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,7 +28,18 @@ class VidkaatApp extends StatelessWidget {
           surface: Color(0xFF1F2026),
         ),
       ),
-      home: const EditorPage(),
+      home: const _Root(),
     );
+  }
+}
+
+/// Shows the launcher until a project is open, then the editor.
+class _Root extends ConsumerWidget {
+  const _Root();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final project = ref.watch(appProvider);
+    return project == null ? const StartScreen() : const EditorPage();
   }
 }

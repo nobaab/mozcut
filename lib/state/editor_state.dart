@@ -40,6 +40,14 @@ class EditorController extends Notifier<EditorState> {
   @override
   EditorState build() => const EditorState();
 
+  /// Replaces the timeline with a project's clips (used when opening a project).
+  void loadClips(List<Clip> clips) {
+    state = EditorState(
+      clips: List.of(clips),
+      selectedId: clips.isEmpty ? null : clips.first.id,
+    );
+  }
+
   Future<void> addClip(String path) async {
     final engine = ref.read(engineProvider);
     final duration = await engine.probeDuration(path);

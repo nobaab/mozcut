@@ -124,4 +124,23 @@ class FfmpegEngine implements Engine {
     }
     onProgress?.call(1);
   }
+
+  @override
+  Future<void> savePoster({
+    required Clip clip,
+    required String outputPath,
+    int width = 480,
+  }) async {
+    final result = await Process.run(_ffmpeg, [
+      '-y',
+      '-ss', clip.inPoint.toStringAsFixed(3),
+      '-i', clip.sourcePath,
+      '-frames:v', '1',
+      '-vf', 'scale=$width:-2',
+      outputPath,
+    ]);
+    if (result.exitCode != 0) {
+      throw EngineException('poster extraction failed: ${result.stderr}');
+    }
+  }
 }
