@@ -2,9 +2,21 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../domain/models/project.dart';
 import '../engine/engine.dart';
-import '../models/project.dart';
+import '../engine/ffmpeg_engine.dart';
+
+part 'project_store.g.dart';
+
+@Riverpod(keepAlive: true)
+ProjectStore projectStore(Ref ref) => ProjectStore(ref.read(engineProvider));
+
+/// The machine's recent projects, newest first. Invalidate to refresh.
+@riverpod
+Future<List<RecentProject>> recents(Ref ref) =>
+    ref.read(projectStoreProvider).recents();
 
 /// Reads and writes projects on disk, and the machine's recents list.
 ///

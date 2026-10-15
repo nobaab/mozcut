@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/core/models/clip.dart';
-import 'package:vidkaat/core/models/project.dart';
+import 'package:vidkaat/domain/models/clip.dart';
+import 'package:vidkaat/domain/models/project.dart';
 
 void main() {
   test('project survives a manifest round-trip', () {

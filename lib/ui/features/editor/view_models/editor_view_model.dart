@@ -1,13 +1,9 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 
-import '../core/engine/engine.dart';
-import '../core/engine/ffmpeg_engine.dart';
-import '../core/models/clip.dart';
+import '../../../../data/engine/ffmpeg_engine.dart';
+import '../../../../domain/models/clip.dart';
 
-/// The single engine instance for the app. Swap the implementation here (e.g.
-/// to a Rust-backed engine) and nothing else changes.
-final engineProvider = Provider<Engine>((ref) => FfmpegEngine());
+part 'editor_view_model.g.dart';
 
 /// The whole edit: the ordered list of clips plus which one is selected.
 class EditorState {
@@ -36,7 +32,8 @@ class EditorState {
       );
 }
 
-class EditorController extends Notifier<EditorState> {
+@Riverpod(keepAlive: true)
+class Editor extends _$Editor {
   @override
   EditorState build() => const EditorState();
 
@@ -49,8 +46,7 @@ class EditorController extends Notifier<EditorState> {
   }
 
   Future<void> addClip(String path) async {
-    final engine = ref.read(engineProvider);
-    final duration = await engine.probeDuration(path);
+    final duration = await ref.read(engineProvider).probeDuration(path);
     final clip = Clip(sourcePath: path, sourceDuration: duration);
     state = state.copyWith(
       clips: [...state.clips, clip],
@@ -111,12 +107,19 @@ class EditorController extends Notifier<EditorState> {
   }
 }
 
-final editorProvider =
-    NotifierProvider<EditorController, EditorState>(EditorController.new);
-
 /// Export progress, 0..1, or null when not exporting.
-final exportProgressProvider = StateProvider<double?>((ref) => null);
+@Riverpod(keepAlive: true)
+class ExportProgress extends _$ExportProgress {
+  @override
+  double? build() => null;
+  void set(double? value) => state = value;
+}
 
 /// Current playhead position of the preview, in source seconds. Written by the
 /// preview panel, read by split/trim actions.
-final playheadProvider = StateProvider<double>((ref) => 0);
+@Riverpod(keepAlive: true)
+class Playhead extends _$Playhead {
+  @override
+  double build() => 0;
+  void set(double seconds) => state = seconds;
+}

@@ -1,8 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../models/clip.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+import '../../domain/models/clip.dart';
 import 'engine.dart';
+
+part 'ffmpeg_engine.g.dart';
+
+/// The app's single engine. Swap the implementation here (e.g. to a Rust-backed
+/// engine) and nothing else changes.
+@Riverpod(keepAlive: true)
+Engine engine(Ref ref) => FfmpegEngine();
 
 /// Engine implementation backed by the system `ffmpeg` / `ffprobe` binaries.
 ///

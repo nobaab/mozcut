@@ -1,4 +1,4 @@
-import '../models/clip.dart';
+import '../../domain/models/clip.dart';
 
 /// The boundary between the UI and the heavy video work.
 ///

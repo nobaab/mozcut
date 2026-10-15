@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../core/models/project.dart';
-import '../state/app_state.dart';
+import '../../../../domain/models/project.dart';
+import '../view_models/launcher_view_model.dart';
 
 /// A preset "video mode": one choice that bundles resolution + fps + aspect,
 /// the way every editor's new-project dialog does.

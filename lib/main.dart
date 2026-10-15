@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 
-import 'state/app_state.dart';
-import 'ui/editor_page.dart';
-import 'ui/start_screen.dart';
+import 'ui/core/app_theme.dart';
+import 'ui/features/editor/views/editor_page.dart';
+import 'ui/features/launcher/view_models/launcher_view_model.dart';
+import 'ui/features/launcher/views/start_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,13 +22,7 @@ class VidkaatApp extends StatelessWidget {
     return MaterialApp(
       title: 'Vidkaat',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true).copyWith(
-        scaffoldBackgroundColor: const Color(0xFF17181C),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF0568FD),
-          surface: Color(0xFF1F2026),
-        ),
-      ),
+      theme: AppTheme.dark,
       home: const _Root(),
     );
   }

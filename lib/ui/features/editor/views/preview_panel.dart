@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-import '../state/editor_state.dart';
+import '../view_models/editor_view_model.dart';
 
 /// The video monitor: shows the selected clip, with play/pause and a scrubber.
 ///
@@ -31,7 +31,7 @@ class _PreviewPanelState extends ConsumerState<PreviewPanel> {
     _player.stream.position.listen((p) {
       if (!mounted) return;
       setState(() => _position = p);
-      ref.read(playheadProvider.notifier).state = p.inMilliseconds / 1000.0;
+      ref.read(playheadProvider.notifier).set(p.inMilliseconds / 1000.0);
     });
     _player.stream.duration.listen((d) {
       if (mounted) setState(() => _duration = d);

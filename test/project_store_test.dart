@@ -3,10 +3,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
-import 'package:vidkaat/core/engine/engine.dart';
-import 'package:vidkaat/core/models/clip.dart';
-import 'package:vidkaat/core/models/project.dart';
-import 'package:vidkaat/core/project/project_store.dart';
+import 'package:vidkaat/data/engine/engine.dart';
+import 'package:vidkaat/domain/models/clip.dart';
+import 'package:vidkaat/domain/models/project.dart';
+import 'package:vidkaat/data/project/project_store.dart';
 
 /// Points path_provider at a temp dir so the recents file lands somewhere real.
 class _FakePathProvider extends PathProviderPlatform

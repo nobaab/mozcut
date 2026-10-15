@@ -4,8 +4,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/models/project.dart';
-import '../state/app_state.dart';
+import '../../../../data/project/project_store.dart';
+import '../../../../domain/models/project.dart';
+import '../view_models/launcher_view_model.dart';
 import 'new_project_dialog.dart';
 
 /// The launcher: everything you can do before a project is open. A heading,

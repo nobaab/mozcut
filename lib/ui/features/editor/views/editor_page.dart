@@ -2,8 +2,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../state/app_state.dart';
-import '../state/editor_state.dart';
+import '../../../../data/engine/ffmpeg_engine.dart';
+import '../../../core/app_colors.dart';
+import '../../../core/widgets/toolbar_button.dart';
+import '../../launcher/view_models/launcher_view_model.dart';
+import '../view_models/editor_view_model.dart';
 import 'preview_panel.dart';
 import 'timeline_panel.dart';
 
@@ -38,7 +41,7 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
     final projectName = ref.watch(appProvider)?.name ?? 'Vidkaat';
 
     return AppBar(
-      backgroundColor: const Color(0xFF1F2026),
+      backgroundColor: AppColors.surface,
       titleSpacing: 8,
       title: Row(
         children: [
@@ -46,19 +49,21 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
             message: 'Save & back to projects',
             child: IconButton(
               icon: const Icon(Icons.arrow_back),
-              onPressed:
-                  exporting ? null : () => ref.read(appProvider.notifier).closeToStart(),
+              onPressed: exporting
+                  ? null
+                  : () => ref.read(appProvider.notifier).closeToStart(),
             ),
           ),
           Text(projectName,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+              style:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
           const SizedBox(width: 20),
-          _Btn(
+          ToolbarButton(
             icon: Icons.add,
             label: 'Import',
             onPressed: exporting ? null : () => _import(context, ref),
           ),
-          _Btn(
+          ToolbarButton(
             icon: Icons.content_cut,
             label: 'Split',
             onPressed: hasSelection && !exporting
@@ -67,7 +72,7 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
                     .splitSelectedAt(ref.read(playheadProvider))
                 : null,
           ),
-          _Btn(
+          ToolbarButton(
             icon: Icons.first_page,
             label: 'Set In',
             onPressed: hasSelection && !exporting
@@ -76,7 +81,7 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
                     .trimSelected(inPoint: ref.read(playheadProvider))
                 : null,
           ),
-          _Btn(
+          ToolbarButton(
             icon: Icons.last_page,
             label: 'Set Out',
             onPressed: hasSelection && !exporting
@@ -85,14 +90,14 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
                     .trimSelected(outPoint: ref.read(playheadProvider))
                 : null,
           ),
-          _Btn(
+          ToolbarButton(
             icon: Icons.delete_outline,
             label: 'Delete',
             onPressed: hasSelection && !exporting
                 ? () => ref.read(editorProvider.notifier).removeSelected()
                 : null,
           ),
-          _Btn(
+          ToolbarButton(
             icon: Icons.save_outlined,
             label: 'Save',
             onPressed: exporting
@@ -158,19 +163,19 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
 
     final engine = ref.read(engineProvider);
     final clips = ref.read(editorProvider).clips;
-    ref.read(exportProgressProvider.notifier).state = 0;
+    final progress = ref.read(exportProgressProvider.notifier);
+    progress.set(0);
     try {
       await engine.export(
         clips: clips,
         outputPath: path,
-        onProgress: (p) =>
-            ref.read(exportProgressProvider.notifier).state = p,
+        onProgress: progress.set,
       );
       if (context.mounted) _snack(context, 'Exported to $path');
     } catch (e) {
       if (context.mounted) _snack(context, 'Export failed: $e');
     } finally {
-      ref.read(exportProgressProvider.notifier).state = null;
+      progress.set(null);
     }
   }
 
@@ -178,26 +183,5 @@ class _Toolbar extends ConsumerWidget implements PreferredSizeWidget {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-}
-
-class _Btn extends StatelessWidget {
-  const _Btn({required this.icon, required this.label, this.onPressed});
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: TextButton.icon(
-        icon: Icon(icon, size: 18),
-        label: Text(label),
-        onPressed: onPressed,
-        style: TextButton.styleFrom(foregroundColor: Colors.white),
-      ),
-    );
   }
 }

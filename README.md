@@ -49,21 +49,29 @@ codebase, same app everywhere.
 
 ## 🧱 How it's built
 
-The golden rule: **the UI and the engine are separate.**
+Layered, feature-first architecture (the Flutter-recommended `data` / `domain` /
+`ui` split), with MVVM view-models powered by Riverpod (codegen):
 
 ```
 lib/
-├── ui/            → Flutter widgets (preview, timeline, toolbar)
-├── state/         → Riverpod state (clips, selection, playhead)
-└── core/
-    ├── models/    → Clip, the edit model
-    └── engine/    → Engine interface + FfmpegEngine (the heavy work)
+├── domain/models/          → Clip, Project, VideoSettings (plain data)
+├── data/
+│   ├── engine/             → Engine interface + FfmpegEngine (the heavy work)
+│   └── project/            → ProjectStore (project folders, recents)
+└── ui/
+    ├── core/               → theme, colours, spacing tokens, shared widgets
+    └── features/
+        ├── launcher/{views, view_models}   → start screen, new-project dialog
+        └── editor/{views, view_models}     → preview, timeline, toolbar
 ```
 
-`Engine` is a small interface; `FfmpegEngine` is the only implementation today,
-shelling out to the system `ffmpeg`. Why this matters: the day real-time GPU
-effect preview is needed, a native (e.g. Rust) engine can implement the **same
-interface** — and not a single line of UI changes.
+The golden rule: **the UI and the engine are separate.** `Engine` is a small
+interface; `FfmpegEngine` is the only implementation today, shelling out to the
+system `ffmpeg`. The day real-time GPU effect preview is needed, a native (e.g.
+Rust) engine can implement the **same interface** — and not a line of UI changes.
+
+> Uses `riverpod_generator`, so run `dart run build_runner build` after changing
+> an annotated provider.
 
 ## 🚀 Getting started
 

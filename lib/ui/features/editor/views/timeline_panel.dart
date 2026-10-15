@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/models/clip.dart';
-import '../state/editor_state.dart';
+import '../../../../domain/models/clip.dart';
+import '../view_models/editor_view_model.dart';
 
 /// The timeline: each clip is a bar whose width is proportional to its trimmed
 /// duration. Click a bar to select it (which loads it in the preview).

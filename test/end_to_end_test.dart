@@ -5,7 +5,8 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/state/editor_state.dart';
+import 'package:vidkaat/data/engine/ffmpeg_engine.dart';
+import 'package:vidkaat/ui/features/editor/view_models/editor_view_model.dart';
 
 /// Drives the WHOLE app flow through the real EditorController + real
 /// FfmpegEngine + real video files — exactly the logic each toolbar button
@@ -15,7 +16,7 @@ void main() {
   const b = '/Users/nobaab/Documents/2026-10-06 21-03-11.mp4';
 
   late ProviderContainer container;
-  late EditorController editor;
+  late Editor editor;
 
   setUp(() {
     container = ProviderContainer(); // real engineProvider (FfmpegEngine)

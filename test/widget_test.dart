@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/core/models/clip.dart';
+import 'package:vidkaat/domain/models/clip.dart';
 
 void main() {
   test('Clip duration is the trimmed region', () {

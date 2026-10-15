@@ -4,8 +4,8 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/core/engine/ffmpeg_engine.dart';
-import 'package:vidkaat/core/models/clip.dart';
+import 'package:vidkaat/data/engine/ffmpeg_engine.dart';
+import 'package:vidkaat/domain/models/clip.dart';
 
 /// Exercises the real FfmpegEngine against real files on disk.
 /// Run with: flutter test test/engine_integration_test.dart
