@@ -220,3 +220,54 @@ abstract class _$TimelineZoom extends $Notifier<double> {
     return element.handleCreate(ref, build);
   }
 }
+
+@ProviderFor(Panels)
+final panelsProvider = PanelsProvider._();
+
+final class PanelsProvider extends $NotifierProvider<Panels, PanelSizes> {
+  PanelsProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'panelsProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$panelsHash();
+
+  @$internal
+  @override
+  Panels create() => Panels();
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(PanelSizes value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<PanelSizes>(value),
+    );
+  }
+}
+
+String _$panelsHash() => r'd677edf28c2962b7e54f2e7daffb99ec304a293b';
+
+abstract class _$Panels extends $Notifier<PanelSizes> {
+  PanelSizes build();
+  @$mustCallSuper
+  @override
+  WhenComplete runBuild() {
+    final ref = this.ref as $Ref<PanelSizes, PanelSizes>;
+    final element =
+        ref.element
+            as $ClassProviderElement<
+              AnyNotifier<PanelSizes, PanelSizes>,
+              PanelSizes,
+              Object?,
+              Object?
+            >;
+    return element.handleCreate(ref, build);
+  }
+}

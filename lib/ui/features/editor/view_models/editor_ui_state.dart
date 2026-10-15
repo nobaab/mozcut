@@ -74,3 +74,40 @@ class TimelineZoom extends _$TimelineZoom {
   void zoomIn() => set(state * 1.3);
   void zoomOut() => set(state / 1.3);
 }
+
+/// The draggable panel sizes: left browser width, right inspector width, and
+/// timeline height (all in logical pixels).
+class PanelSizes {
+  const PanelSizes(
+      {required this.left, required this.right, required this.timeline});
+  final double left;
+  final double right;
+  final double timeline;
+
+  PanelSizes copyWith({double? left, double? right, double? timeline}) =>
+      PanelSizes(
+        left: left ?? this.left,
+        right: right ?? this.right,
+        timeline: timeline ?? this.timeline,
+      );
+}
+
+@Riverpod(keepAlive: true)
+class Panels extends _$Panels {
+  @override
+  PanelSizes build() =>
+      const PanelSizes(left: 380, right: 300, timeline: 220);
+
+  /// Drag the divider on the right edge of the left panel.
+  void dragLeft(double dx) =>
+      state = state.copyWith(left: (state.left + dx).clamp(260, 620));
+
+  /// Drag the divider on the left edge of the right panel (dragging left grows
+  /// the inspector).
+  void dragRight(double dx) =>
+      state = state.copyWith(right: (state.right - dx).clamp(240, 560));
+
+  /// Drag the divider above the timeline (dragging up grows the timeline).
+  void dragTimeline(double dy) =>
+      state = state.copyWith(timeline: (state.timeline - dy).clamp(140, 560));
+}
