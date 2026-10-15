@@ -138,6 +138,13 @@ class Editor extends _$Editor {
     state = state.copyWith(clips: clips, selectedId: left.id);
   }
 
+  /// Sets the playback speed of the selected clip, clamped to a sane range
+  /// (0.1x–100x). The timeline length of the clip ([Clip.duration]) updates
+  /// automatically since it is derived from the trim and the speed.
+  void setSelectedSpeed(double speed) {
+    _mapSelected((c) => c.copyWith(speed: speed.clamp(0.1, 100.0)));
+  }
+
   /// Replaces all captions on the selected clip (e.g. after transcription).
   void setSelectedCaptions(List<Caption> captions) {
     _mapSelected((c) => c.copyWith(captions: captions));

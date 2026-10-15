@@ -22,6 +22,10 @@ class Clip {
     double? posY,
     double? rotation,
     bool? flipH,
+    double? speed,
+    double? volume,
+    double? fadeIn,
+    double? fadeOut,
   })  : id = id ?? _uuid.v4(),
         inPoint = inPoint ?? 0,
         outPoint = outPoint ?? sourceDuration,
@@ -30,7 +34,11 @@ class Clip {
         posX = posX ?? 0.0,
         posY = posY ?? 0.0,
         rotation = rotation ?? 0.0,
-        flipH = flipH ?? false;
+        flipH = flipH ?? false,
+        speed = speed ?? 1.0,
+        volume = volume ?? 1.0,
+        fadeIn = fadeIn ?? 0.0,
+        fadeOut = fadeOut ?? 0.0;
 
   final String id;
   final String sourcePath;
@@ -45,40 +53,46 @@ class Clip {
   double outPoint;
 
   /// Auto-generated (or hand-edited) captions for this clip, timed relative
-  /// to [inPoint] (i.e. a caption's own `start` of 0 means "right at the
-  /// clip's in-point"). Re-trimming the clip after generating captions does
-  /// not re-time them — regenerate if the trim changes materially.
+  /// to [inPoint]. Re-trimming after generating captions does not re-time them.
   final List<Caption> captions;
 
   // ── Transform ──
-  //
-  // The clip is first fit ("contain") into the project's output canvas
-  // preserving its own aspect ratio, then these are applied on top of that
-  // fitted frame. Identity values reproduce the untransformed clip.
+  // The clip is fit ("contain") into the project's output canvas preserving its
+  // aspect ratio, then these are applied on top. Identity values = untransformed.
 
-  /// Uniform scale factor applied on top of the "fit to canvas" size.
-  /// 1.0 = 100% (no extra scaling).
+  /// Uniform scale on top of the "fit to canvas" size. 1.0 = 100%.
   double scale;
 
-  /// Horizontal offset of the clip's center from the canvas center, as a
-  /// fraction of half the canvas width. 0 = centered, -1 = flush with the
-  /// left edge, 1 = flush with the right edge. (Values outside -1..1 push
-  /// the clip partially or fully off-screen, which is allowed.)
+  /// Horizontal center offset as a fraction of half the canvas width
+  /// (0 = centered, ±1 = flush with an edge).
   double posX;
 
-  /// Vertical offset of the clip's center from the canvas center, as a
-  /// fraction of half the canvas height. 0 = centered, -1 = top edge,
-  /// 1 = bottom edge. Same convention as [posX].
+  /// Vertical center offset as a fraction of half the canvas height.
   double posY;
 
-  /// Rotation in degrees, clockwise. 0 = unrotated.
+  /// Rotation in degrees, clockwise.
   double rotation;
 
-  /// Mirrors the clip horizontally when true.
+  /// Mirrors the clip horizontally.
   bool flipH;
 
-  /// Length this clip contributes to the timeline, in seconds.
-  double get duration => (outPoint - inPoint).clamp(0, sourceDuration);
+  // ── Speed & audio ──
+
+  /// Playback rate of the trimmed region on the timeline. 1.0 = no-op; 2.0 is
+  /// twice as fast (half the timeline length); 0.5 is half speed.
+  final double speed;
+
+  /// Audio gain. 1.0 = 100% (unchanged), 2.0 = +doubled, 0 = muted.
+  final double volume;
+
+  /// Audio fade-in / fade-out lengths, in seconds (0 = none).
+  final double fadeIn;
+  final double fadeOut;
+
+  /// Length this clip contributes to the timeline, in seconds: the trimmed
+  /// source region (clamped to source bounds) divided by [speed].
+  double get duration =>
+      (outPoint - inPoint).clamp(0, sourceDuration) / speed;
 
   String get fileName => sourcePath.split(RegExp(r'[/\\]')).last;
 
@@ -91,6 +105,10 @@ class Clip {
     double? posY,
     double? rotation,
     bool? flipH,
+    double? speed,
+    double? volume,
+    double? fadeIn,
+    double? fadeOut,
   }) =>
       Clip(
         id: id,
@@ -104,6 +122,10 @@ class Clip {
         posY: posY ?? this.posY,
         rotation: rotation ?? this.rotation,
         flipH: flipH ?? this.flipH,
+        speed: speed ?? this.speed,
+        volume: volume ?? this.volume,
+        fadeIn: fadeIn ?? this.fadeIn,
+        fadeOut: fadeOut ?? this.fadeOut,
       );
 
   Map<String, dynamic> toJson() => {
@@ -118,6 +140,10 @@ class Clip {
         'posY': posY,
         'rotation': rotation,
         'flipH': flipH,
+        'speed': speed,
+        'volume': volume,
+        'fadeIn': fadeIn,
+        'fadeOut': fadeOut,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -129,12 +155,16 @@ class Clip {
         captions: (json['captions'] as List?)
             ?.map((e) => Caption.fromJson(e as Map<String, dynamic>))
             .toList(),
-        // Missing keys (projects saved before these features) fall back to
+        // Missing keys (projects saved before a feature existed) fall back to
         // identity defaults via the constructor.
         scale: (json['scale'] as num?)?.toDouble(),
         posX: (json['posX'] as num?)?.toDouble(),
         posY: (json['posY'] as num?)?.toDouble(),
         rotation: (json['rotation'] as num?)?.toDouble(),
         flipH: json['flipH'] as bool?,
+        speed: (json['speed'] as num?)?.toDouble(),
+        volume: (json['volume'] as num?)?.toDouble(),
+        fadeIn: (json['fadeIn'] as num?)?.toDouble(),
+        fadeOut: (json['fadeOut'] as num?)?.toDouble(),
       );
 }

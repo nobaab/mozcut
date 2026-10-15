@@ -109,21 +109,33 @@ class FfmpegEngine implements Engine {
         ]);
       }
 
-      // Per-input filter chain applying each clip's transform, then concat,
-      // then (if any clip has captions) burn subtitles onto the joined video.
-      //
-      // Every clip — even an untouched one — runs through the same transform
-      // chain (see _videoFilterChain) so every input lands on the identical
-      // `_canvasWidth`x`_canvasHeight` canvas; concat requires matching frame
-      // sizes and sources may differ. Captions are then applied to the
-      // concatenated video so their timing lines up with the final timeline.
+      // Per clip: apply the transform (scale / position / rotation / flip)
+      // chain, then a speed change (setpts on video, atempo on audio), then
+      // concat all clips, then burn captions onto the joined video. Every step
+      // is additive: an untouched clip (identity transform, speed 1, no
+      // captions) produces the same graph as before these features existed.
       final filter = StringBuffer();
       final videoLabels = <String>[];
+      final audioLabels = <String>[];
       for (var i = 0; i < clips.length; i++) {
-        videoLabels.add(_videoFilterChain(filter, i, clips[i]));
+        final clip = clips[i];
+        var vlabel = _videoFilterChain(filter, i, clip); // label, no brackets
+        var alabel = '$i:a:0';
+        if (clip.speed != 1.0) {
+          filter.write(
+              '[$vlabel]setpts=PTS/${_fmtFilterNum(clip.speed)}[sv$i];');
+          vlabel = 'sv$i';
+          final atempo = _atempoChain(clip.speed)
+              .map((f) => 'atempo=${_fmtFilterNum(f)}')
+              .join(',');
+          filter.write('[$i:a:0]$atempo[sa$i];');
+          alabel = 'sa$i';
+        }
+        videoLabels.add(vlabel);
+        audioLabels.add(alabel);
       }
       for (var i = 0; i < clips.length; i++) {
-        filter.write('[${videoLabels[i]}][$i:a:0]');
+        filter.write('[${videoLabels[i]}][${audioLabels[i]}]');
       }
       filter.write('concat=n=${clips.length}:v=1:a=1[vcat][outa]');
 
@@ -210,6 +222,31 @@ class FfmpegEngine implements Engine {
     }
     return buffer.toString();
   }
+
+  /// Decomposes an arbitrary speed factor into a chain of `atempo` filter
+  /// values, since ffmpeg's `atempo` filter only accepts values in the range
+  /// [0.5, 2.0]. The product of the returned factors equals [speed].
+  static List<double> _atempoChain(double speed) {
+    final factors = <double>[];
+    var remaining = speed;
+    while (remaining > 2.0) {
+      factors.add(2.0);
+      remaining /= 2.0;
+    }
+    while (remaining < 0.5) {
+      factors.add(0.5);
+      remaining /= 0.5;
+    }
+    if (factors.isEmpty || (remaining - 1.0).abs() > 1e-9) {
+      factors.add(remaining);
+    }
+    return factors;
+  }
+
+  /// Formats a number for embedding in an ffmpeg filtergraph expression —
+  /// fixed-point, so floating point division never produces scientific
+  /// notation (which ffmpeg's filter parser rejects).
+  static String _fmtFilterNum(double value) => value.toStringAsFixed(6);
 
   /// Escapes a filesystem path for safe use inside an ffmpeg filtergraph
   /// option string (colons, backslashes and quotes are all filtergraph
