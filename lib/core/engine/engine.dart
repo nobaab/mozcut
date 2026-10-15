@@ -1,0 +1,29 @@
+import '../models/clip.dart';
+
+/// The boundary between the UI and the heavy video work.
+///
+/// Everything above this line is Flutter. Everything below is "the engine".
+/// Today the only implementation is [FfmpegEngine], which shells out to the
+/// `ffmpeg` binary. The day real-time GPU effects are needed, a Rust engine
+/// (via FFI / flutter_rust_bridge) can implement this same interface and the
+/// UI will not change one line. Keep this interface small and media-only.
+abstract class Engine {
+  /// Reads a media file's duration (seconds) and basic validity.
+  /// Throws [EngineException] if the file cannot be read as media.
+  Future<double> probeDuration(String path);
+
+  /// Trims each clip to its in/out region, joins them in order, and writes
+  /// the result to [outputPath]. Reports 0..1 progress via [onProgress].
+  Future<void> export({
+    required List<Clip> clips,
+    required String outputPath,
+    void Function(double progress)? onProgress,
+  });
+}
+
+class EngineException implements Exception {
+  EngineException(this.message);
+  final String message;
+  @override
+  String toString() => 'EngineException: $message';
+}

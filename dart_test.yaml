@@ -1,0 +1,4 @@
+tags:
+  integration:
+    # Tests that hit the real ffmpeg binary and real media files on disk.
+    # Run just these with:  flutter test --tags integration
