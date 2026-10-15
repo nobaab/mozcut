@@ -124,4 +124,38 @@ void main() {
       expect(clipAt(0).duration, 10);
     });
   });
+
+  group('setSelectedSpeed', () {
+    test('sets the speed of the selected clip and recomputes duration', () {
+      editor.select(clipAt(0).id);
+      editor.setSelectedSpeed(2.0);
+      expect(clipAt(0).speed, 2.0);
+      expect(clipAt(0).duration, closeTo(5, 0.001));
+    });
+
+    test('clamps below the minimum to 0.1', () {
+      editor.select(clipAt(0).id);
+      editor.setSelectedSpeed(0.0001);
+      expect(clipAt(0).speed, 0.1);
+    });
+
+    test('clamps above the maximum to 100', () {
+      editor.select(clipAt(0).id);
+      editor.setSelectedSpeed(1000);
+      expect(clipAt(0).speed, 100.0);
+    });
+
+    test('does not affect other clips', () {
+      editor.select(clipAt(0).id);
+      editor.setSelectedSpeed(2.0);
+      expect(clipAt(1).speed, 1.0);
+      expect(clipAt(2).speed, 1.0);
+    });
+
+    test('does nothing when there is no selection', () {
+      editor.select('does-not-exist');
+      editor.setSelectedSpeed(2.0);
+      expect(clipAt(0).speed, 1.0);
+    });
+  });
 }

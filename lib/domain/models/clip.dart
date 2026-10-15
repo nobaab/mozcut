@@ -17,10 +17,12 @@ class Clip {
     double? inPoint,
     double? outPoint,
     List<Caption>? captions,
+    double? speed,
   })  : id = id ?? _uuid.v4(),
         inPoint = inPoint ?? 0,
         outPoint = outPoint ?? sourceDuration,
-        captions = captions ?? const [];
+        captions = captions ?? const [],
+        speed = speed ?? 1.0;
 
   final String id;
   final String sourcePath;
@@ -40,8 +42,18 @@ class Clip {
   /// not re-time them — regenerate if the trim changes materially.
   final List<Caption> captions;
 
-  /// Length this clip contributes to the timeline, in seconds.
-  double get duration => (outPoint - inPoint).clamp(0, sourceDuration);
+  // ── speed ──
+  // Playback rate applied to the trimmed region when it is placed on the
+  // timeline / exported. 1.0 (the default) is a no-op: [duration] and the
+  // export are byte-for-byte what they were before this field existed.
+  // 2.0 plays twice as fast (half the timeline length); 0.5 plays at half
+  // speed (double the timeline length).
+  final double speed;
+
+  /// Length this clip contributes to the timeline, in seconds. This is the
+  /// trimmed source region (clamped to the source bounds) scaled by [speed]
+  /// — e.g. a 10s trimmed region at 2x speed takes up 5s of timeline.
+  double get duration => (outPoint - inPoint).clamp(0, sourceDuration) / speed;
 
   String get fileName => sourcePath.split(RegExp(r'[/\\]')).last;
 
@@ -49,6 +61,7 @@ class Clip {
     double? inPoint,
     double? outPoint,
     List<Caption>? captions,
+    double? speed,
   }) =>
       Clip(
         id: id,
@@ -57,6 +70,7 @@ class Clip {
         inPoint: inPoint ?? this.inPoint,
         outPoint: outPoint ?? this.outPoint,
         captions: captions ?? this.captions,
+        speed: speed ?? this.speed,
       );
 
   Map<String, dynamic> toJson() => {
@@ -66,6 +80,7 @@ class Clip {
         'inPoint': inPoint,
         'outPoint': outPoint,
         'captions': captions.map((c) => c.toJson()).toList(),
+        'speed': speed,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -77,5 +92,7 @@ class Clip {
         captions: (json['captions'] as List?)
             ?.map((e) => Caption.fromJson(e as Map<String, dynamic>))
             .toList(),
+        // Absent in projects saved before speed existed — default to 1.0 (no-op).
+        speed: (json['speed'] as num?)?.toDouble(),
       );
 }

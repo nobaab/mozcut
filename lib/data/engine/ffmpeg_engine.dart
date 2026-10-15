@@ -101,9 +101,32 @@ class FfmpegEngine implements Engine {
         ]);
       }
 
+      // Per-clip speed adjustment: `setpts` rescales video presentation
+      // timestamps, `atempo` rescales audio tempo (pitch-preserving). `atempo`
+      // only accepts factors in [0.5, 2.0], so factors outside that range are
+      // decomposed into a chain of filters whose product is the requested
+      // speed (e.g. 4x -> atempo=2.0,atempo=2.0). speed == 1.0 (the default)
+      // skips these filters entirely, so existing exports are unaffected.
       final filter = StringBuffer();
+      final videoLabels = <String>[];
+      final audioLabels = <String>[];
       for (var i = 0; i < clips.length; i++) {
-        filter.write('[$i:v:0][$i:a:0]');
+        final speed = clips[i].speed;
+        if (speed != 1.0) {
+          filter.write('[$i:v:0]setpts=PTS/${_fmtFilterNum(speed)}[spv$i];');
+          final atempo = _atempoChain(speed)
+              .map((f) => 'atempo=${_fmtFilterNum(f)}')
+              .join(',');
+          filter.write('[$i:a:0]$atempo[spa$i];');
+          videoLabels.add('[spv$i]');
+          audioLabels.add('[spa$i]');
+        } else {
+          videoLabels.add('[$i:v:0]');
+          audioLabels.add('[$i:a:0]');
+        }
+      }
+      for (var i = 0; i < clips.length; i++) {
+        filter.write('${videoLabels[i]}${audioLabels[i]}');
       }
       filter.write('concat=n=${clips.length}:v=1:a=1[v0][outa]');
 
@@ -189,6 +212,31 @@ class FfmpegEngine implements Engine {
     }
     return buffer.toString();
   }
+
+  /// Decomposes an arbitrary speed factor into a chain of `atempo` filter
+  /// values, since ffmpeg's `atempo` filter only accepts values in the range
+  /// [0.5, 2.0]. The product of the returned factors equals [speed].
+  static List<double> _atempoChain(double speed) {
+    final factors = <double>[];
+    var remaining = speed;
+    while (remaining > 2.0) {
+      factors.add(2.0);
+      remaining /= 2.0;
+    }
+    while (remaining < 0.5) {
+      factors.add(0.5);
+      remaining /= 0.5;
+    }
+    if (factors.isEmpty || (remaining - 1.0).abs() > 1e-9) {
+      factors.add(remaining);
+    }
+    return factors;
+  }
+
+  /// Formats a number for embedding in an ffmpeg filtergraph expression —
+  /// fixed-point, so floating point division never produces scientific
+  /// notation (which ffmpeg's filter parser rejects).
+  static String _fmtFilterNum(double value) => value.toStringAsFixed(6);
 
   /// Escapes a filesystem path for safe use inside an ffmpeg filtergraph
   /// option string (colons, backslashes and quotes are all filtergraph

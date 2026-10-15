@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_colors.dart';
+import '../../../core/widgets/chips.dart';
+import '../../../core/widgets/fields.dart';
+import '../../../core/widgets/rows.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 
@@ -31,9 +34,12 @@ class InspectorPanel extends ConsumerWidget {
                         style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.35))),
                   )
-                : rightTab == EditorRightTab.video
-                    ? _VideoTab()
-                    : _ComingSoon(label: rightTab.label),
+                : switch (rightTab) {
+                    EditorRightTab.video => _VideoTab(),
+                    EditorRightTab.speed =>
+                      _SpeedTab(key: ValueKey(clip.id)),
+                    _ => _ComingSoon(label: rightTab.label),
+                  },
           ),
         ],
       ),
@@ -251,6 +257,93 @@ class _VideoTab extends ConsumerWidget {
 
   static final _lbl =
       TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5));
+}
+
+/// The Speed tab: preset chips (0.5x/1x/2x/4x) plus a custom numeric field,
+/// reading/writing the selected clip's [Clip.speed]. Keyed by clip id from
+/// the parent so switching the selected clip gives this a fresh controller
+/// rather than showing stale text.
+class _SpeedTab extends ConsumerStatefulWidget {
+  const _SpeedTab({super.key});
+
+  @override
+  ConsumerState<_SpeedTab> createState() => _SpeedTabState();
+}
+
+class _SpeedTabState extends ConsumerState<_SpeedTab> {
+  static const _presets = [0.5, 1.0, 2.0, 4.0];
+
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    final clip = ref.read(editorProvider).selected!;
+    _controller = TextEditingController(text: _format(clip.speed));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  static String _format(double speed) => speed == speed.roundToDouble()
+      ? speed.toStringAsFixed(0)
+      : speed.toStringAsFixed(2);
+
+  void _applyPreset(double speed) {
+    ref.read(editorProvider.notifier).setSelectedSpeed(speed);
+    _controller.text = _format(speed);
+  }
+
+  void _applyCustom(String text) {
+    final parsed = double.tryParse(text);
+    if (parsed != null && parsed > 0) {
+      ref.read(editorProvider.notifier).setSelectedSpeed(parsed);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected))!;
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        const VSectionHeader('Speed'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final p in _presets)
+              VChip(
+                label: '${_format(p)}x',
+                selected: (clip.speed - p).abs() < 0.001,
+                onTap: () => _applyPreset(p),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        VPropertyRow(
+          label: 'Custom',
+          child: VNumberField(
+            value: _controller.text,
+            controller: _controller,
+            suffix: 'x',
+            onChanged: _applyCustom,
+          ),
+        ),
+        const SizedBox(height: 18),
+        const VSectionHeader('Result'),
+        VPropertyRow(
+          label: 'Duration',
+          child: Text('${clip.duration.toStringAsFixed(2)}s',
+              style: const TextStyle(fontSize: 12)),
+        ),
+      ],
+    );
+  }
 }
 
 class _SectionHeader extends StatelessWidget {
