@@ -9,6 +9,7 @@ import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/player_control.dart';
+import '../view_models/sticker_overlays_view_model.dart';
 import '../view_models/text_overlays_view_model.dart';
 
 /// The centre monitor, modelled on CapCut's Player: a "Player" header, the video
@@ -140,12 +141,15 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     final clips = ref.read(editorProvider).clips;
     if (clips.isEmpty) return;
     final textOverlays = ref.read(textOverlaysProvider);
+    final stickerOverlays = ref.read(stickerOverlaysProvider);
     final engine = ref.read(engineProvider);
 
     ref.read(previewRenderingProvider.notifier).set(true);
     try {
-      final path =
-          await engine.renderPreview(clips: clips, textOverlays: textOverlays);
+      final path = await engine.renderPreview(
+          clips: clips,
+          textOverlays: textOverlays,
+          stickerOverlays: stickerOverlays);
       if (!mounted) return;
       _previewMode = true;
       _loadedPath = path;

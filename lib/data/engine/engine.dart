@@ -1,5 +1,6 @@
 import '../../domain/models/clip.dart';
 import '../../domain/models/export_settings.dart';
+import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
 
 /// The boundary between the UI and the heavy video work.
@@ -16,28 +17,31 @@ abstract class Engine {
 
   /// Trims each clip to its in/out region, joins them in order, applies
   /// [settings] (resolution / frame-rate / codec / quality / format), burns in
-  /// any [textOverlays] (timed on the final timeline), and writes the result to
-  /// [outputPath]. Reports 0..1 progress via [onProgress]. Defaults reproduce
-  /// the export pipeline's original, fixed behaviour.
+  /// any [textOverlays] and [stickerOverlays] (both timed on the final
+  /// timeline), and writes the result to [outputPath]. Reports 0..1 progress
+  /// via [onProgress]. Defaults reproduce the export pipeline's original,
+  /// fixed behaviour.
   Future<void> export({
     required List<Clip> clips,
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double progress)? onProgress,
   });
 
   /// Renders a small/fast proxy of the *whole timeline* — the same edit
   /// [export] would produce (per-clip transform/speed/audio, concatenated in
-  /// order, captions and [textOverlays] burned in) but at low resolution and
-  /// encoder effort, so it renders in a fraction of the time. Used to drive a
-  /// WYSIWYG player preview instead of showing just one clip's raw source.
-  /// Returns the path to the rendered temp MP4. Reports 0..1 progress via
-  /// [onProgress]. Throws [EngineException] if [clips] is empty or ffmpeg
-  /// fails.
+  /// order, captions, [textOverlays] and [stickerOverlays] burned in) but at
+  /// low resolution and encoder effort, so it renders in a fraction of the
+  /// time. Used to drive a WYSIWYG player preview instead of showing just one
+  /// clip's raw source. Returns the path to the rendered temp MP4. Reports
+  /// 0..1 progress via [onProgress]. Throws [EngineException] if [clips] is
+  /// empty or ffmpeg fails.
   Future<String> renderPreview({
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
     void Function(double progress)? onProgress,
   });
 
