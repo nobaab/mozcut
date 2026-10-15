@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+// Aliased: this file also uses Flutter's own `Clip` enum (clipBehavior), so
+// the domain model needs a distinct name to avoid colliding with it.
+import '../../../../domain/models/clip.dart' as domain show Clip;
 import '../../../core/app_colors.dart';
 import '../../../core/app_spacing.dart';
 import '../../../core/widgets/chips.dart';
 import '../../../core/widgets/fields.dart';
+import '../view_models/editor_view_model.dart';
 
 /// A transition in the catalogue. Purely descriptive — no engine wiring yet.
 class _Transition {
@@ -39,6 +43,12 @@ const _transitions = <_Transition>[
   _Transition('Zoom Blur', 'Zoom', Icons.zoom_out_map),
 ];
 
+/// The full catalogue, exposed read-only for tests that check every entry
+/// has a matching `kTransitionPresets` (ffmpeg `xfade`) mapping — see
+/// test/transition_presets_test.dart.
+List<String> get kTransitionCatalogue =>
+    List.unmodifiable(_transitions.map((t) => t.name));
+
 const _categories = <String>[
   'All',
   'Basic',
@@ -52,9 +62,11 @@ const _categories = <String>[
 ];
 
 /// The Transitions tab: a searchable, filterable catalogue of transitions
-/// (styled after CapCut's browser). Clicking a card is a "coming soon" stub —
-/// this is catalogue UI only, it doesn't touch the Clip model or the render
-/// engine.
+/// (styled after CapCut's browser). Tapping a card sets (or, tapping the
+/// already-applied one again, clears) that transition on the SELECTED clip's
+/// `Clip.transitionId` — it plays entering the selected clip from the
+/// previous one. See `lib/domain/models/transition_presets.dart` for the
+/// name -> ffmpeg `xfade` mapping actually used on export.
 class TransitionsPanel extends ConsumerStatefulWidget {
   const TransitionsPanel({super.key});
 
@@ -73,6 +85,19 @@ class _TransitionsPanelState extends ConsumerState<TransitionsPanel> {
     super.dispose();
   }
 
+  void _applyTransition(domain.Clip? clip, _Transition transition) {
+    if (clip == null) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+            const SnackBar(content: Text('Select a clip first')));
+      return;
+    }
+    final editor = ref.read(editorProvider.notifier);
+    editor.setSelectedTransition(
+        clip.transitionId == transition.name ? null : transition.name);
+  }
+
   List<_Transition> get _filtered {
     return _transitions.where((t) {
       final matchesCategory = _category == 'All' ||
@@ -86,6 +111,7 @@ class _TransitionsPanelState extends ConsumerState<TransitionsPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected));
     final results = _filtered;
 
     return Column(
@@ -101,6 +127,57 @@ class _TransitionsPanelState extends ConsumerState<TransitionsPanel> {
                 setState(() => _query = value.trim().toLowerCase()),
           ),
         ),
+        if (clip != null && clip.transitionId != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('Transition: ${clip.transitionId}',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withValues(alpha: 0.7))),
+                    ),
+                    TextButton(
+                      onPressed: () => ref
+                          .read(editorProvider.notifier)
+                          .setSelectedTransition(null),
+                      child: const Text('None'),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text('Duration',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.white.withValues(alpha: 0.55))),
+                    Expanded(
+                      child: Slider(
+                        value: clip.transitionDuration.clamp(0.05, 5.0),
+                        min: 0.05,
+                        max: 5.0,
+                        onChanged: (v) => ref
+                            .read(editorProvider.notifier)
+                            .setSelectedTransition(clip.transitionId,
+                                duration: v),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 42,
+                      child: Text(
+                          '${clip.transitionDuration.toStringAsFixed(1)}s',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         SizedBox(
           height: AppSpacing.controlHeight,
           child: ListView.separated(
@@ -143,8 +220,11 @@ class _TransitionsPanelState extends ConsumerState<TransitionsPanel> {
                         childAspectRatio: 0.92,
                       ),
                       itemCount: results.length,
-                      itemBuilder: (context, i) =>
-                          _TransitionCard(transition: results[i]),
+                      itemBuilder: (context, i) => _TransitionCard(
+                        transition: results[i],
+                        selected: clip?.transitionId == results[i].name,
+                        onTap: () => _applyTransition(clip, results[i]),
+                      ),
                     );
                   },
                 ),
@@ -155,17 +235,20 @@ class _TransitionsPanelState extends ConsumerState<TransitionsPanel> {
 }
 
 class _TransitionCard extends StatelessWidget {
-  const _TransitionCard({required this.transition});
+  const _TransitionCard({
+    required this.transition,
+    required this.selected,
+    required this.onTap,
+  });
   final _Transition transition;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-      onTap: () => ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-            SnackBar(content: Text('${transition.name} — coming soon'))),
+      onTap: onTap,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -175,13 +258,18 @@ class _TransitionCard extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.well,
                 borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                border: Border.all(color: AppColors.line),
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.line,
+                  width: selected ? 2 : 1,
+                ),
               ),
               child: Center(
                 child: Icon(
-                  transition.icon,
+                  selected ? Icons.check_circle : transition.icon,
                   size: 26,
-                  color: Colors.white.withValues(alpha: 0.5),
+                  color: selected
+                      ? AppColors.accent
+                      : Colors.white.withValues(alpha: 0.5),
                 ),
               ),
             ),

@@ -330,6 +330,19 @@ class Editor extends _$Editor {
         c.copyWith(effectId: effectId, clearEffectId: effectId == null));
   }
 
+  // ── transition ──
+
+  /// Sets (or, passing null, clears) the transition that plays entering the
+  /// selected clip from the previous one ([Clip.transitionId]), optionally
+  /// updating its length ([Clip.transitionDuration], clamped to 0.05–5s).
+  void setSelectedTransition(String? transitionId, {double? duration}) {
+    _mapSelected((c) => c.copyWith(
+          transitionId: transitionId,
+          clearTransitionId: transitionId == null,
+          transitionDuration: duration?.clamp(0.05, 5.0).toDouble(),
+        ));
+  }
+
   void _mapSelected(Clip Function(Clip) f) {
     final idx = state.selectedIndex;
     if (idx < 0) return;

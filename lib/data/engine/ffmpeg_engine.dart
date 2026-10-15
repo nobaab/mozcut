@@ -9,6 +9,7 @@ import '../../domain/models/color_filter_presets.dart';
 import '../../domain/models/effect_presets.dart';
 import '../../domain/models/export_settings.dart';
 import '../../domain/models/text_overlay.dart';
+import '../../domain/models/transition_presets.dart';
 import 'engine.dart';
 
 part 'ffmpeg_engine.g.dart';
@@ -242,15 +243,12 @@ class FfmpegEngine implements Engine {
         videoLabels.add(vlabel);
         audioLabels.add(alabel);
       }
-      for (var i = 0; i < clips.length; i++) {
-        filter.write('[${videoLabels[i]}][${audioLabels[i]}]');
-      }
-      filter.write('concat=n=${clips.length}:v=1:a=1[vcat][outa]');
+      final joined = _joinClips(filter, clips, videoLabels, audioLabels);
 
-      // Chain optional stages (resize, then subtitles) onto the concat
+      // Chain optional stages (resize, then subtitles) onto the joined
       // output, each writing to a fresh label so the filtergraph stays a
       // simple linear pipe no matter which stages are present.
-      var videoLabel = '[vcat]';
+      var videoLabel = '[${joined.video}]';
       var nextLabelIndex = 1;
       if (scaleFilter != null) {
         final outLabel = '[vs$nextLabelIndex]';
@@ -291,7 +289,7 @@ class FfmpegEngine implements Engine {
         inputArgs: inputArgs,
         filterComplex: filter.toString(),
         videoLabel: videoLabel,
-        audioLabel: '[outa]',
+        audioLabel: '[${joined.audio}]',
         tempFiles: [?srtFile, ...overlayFiles],
       );
     } catch (_) {
@@ -301,6 +299,105 @@ class FfmpegEngine implements Engine {
       await _deleteAll([?srtFile, ...overlayFiles]);
       rethrow;
     }
+  }
+
+  // ── transition ──
+
+  /// Joins every clip's per-clip video/audio pad (already transformed by
+  /// [_videoFilterChain]/[_audioFilterChain]/speed, in [videoLabels] /
+  /// [audioLabels], same order as [clips]) into a single video + audio pad,
+  /// writing the join filters into [filter] and returning the final (bare,
+  /// unbracketed) pad labels.
+  ///
+  /// Fast path: if no clip has a [Clip.transitionId], this is byte-for-byte
+  /// the original graph — one N-ary `concat` filter — so a timeline with no
+  /// transitions exports identically to before this feature existed.
+  ///
+  /// Otherwise, clips are folded left-to-right into a single running pad: a
+  /// clip with a transition is joined to the running pad with ffmpeg's
+  /// `xfade` (video) + `acrossfade` (audio) instead of `concat`; a clip
+  /// without one is still joined with (a binary) `concat`. `concat` and
+  /// `xfade` boundaries can be freely mixed on the same timeline — each step
+  /// only needs to know the running pad's current duration so far (tracked in
+  /// Dart alongside the graph), which is unaffected by what kind of join
+  /// produced it.
+  ///
+  /// `xfade`'s `offset` (when, on the running pad, the transition starts)
+  /// is the running duration minus the transition's own duration; after an
+  /// `xfade` join the running duration shrinks by the transition duration
+  /// (the two clips overlap during it), while after a `concat` join it is
+  /// simply the sum (no overlap).
+  _JoinResult _joinClips(
+    StringBuffer filter,
+    List<Clip> clips,
+    List<String> videoLabels,
+    List<String> audioLabels,
+  ) {
+    if (!clips.any((c) => c.transitionId != null)) {
+      for (var i = 0; i < clips.length; i++) {
+        filter.write('[${videoLabels[i]}][${audioLabels[i]}]');
+      }
+      filter.write('concat=n=${clips.length}:v=1:a=1[vcat][outa]');
+      return const _JoinResult(video: 'vcat', audio: 'outa');
+    }
+
+    // Built in a local buffer (rather than writing straight into [filter])
+    // so the trailing ';' separator between clauses can be stripped off the
+    // very last one before it's appended — same convention the fast path
+    // above (and every other stage of this graph) relies on: a stage either
+    // ends the whole filter_complex, or a later stage prepends its own ';'.
+    final local = StringBuffer();
+    var runningVideo = videoLabels[0];
+    var runningAudio = audioLabels[0];
+    var runningDuration = clips[0].duration;
+    for (var i = 1; i < clips.length; i++) {
+      final clip = clips[i];
+      final nextVideo = videoLabels[i];
+      final nextAudio = audioLabels[i];
+      final outVideo = 'jv$i';
+      final outAudio = 'ja$i';
+      if (clip.transitionId != null) {
+        // Clamp so `duration` never exceeds either side's own length (an
+        // overlap longer than a clip would make `offset` negative or the
+        // overlap ill-defined) — floor of 0.05s keeps it a real transition.
+        final maxDuration =
+            (runningDuration < clip.duration ? runningDuration : clip.duration) *
+                0.9;
+        final duration = clip.transitionDuration
+            .clamp(0.05, maxDuration < 0.05 ? 0.05 : maxDuration);
+        final offset = (runningDuration - duration).clamp(0.0, double.infinity);
+        final xfadeType = xfadeTransitionFor(clip.transitionId!);
+        // `xfade` requires both inputs to share a timebase. Every per-clip
+        // chain already runs at a constant `_canvasFps` (via the `color=`
+        // source in `_videoFilterChain`), but a `concat` filter's output pad
+        // has a different, generic timebase — so if the running pad came out
+        // of a `concat` join, feeding it straight into `xfade` fails with
+        // "timebase ... do not match". Re-asserting `fps=$_canvasFps` on both
+        // sides right before every `xfade` is a no-op for an already-correct
+        // timebase and fixes it otherwise, regardless of which kind of join
+        // produced the running pad.
+        final normRunning = 'xn${i}a';
+        final normNext = 'xn${i}b';
+        local.write('[$runningVideo]fps=$_canvasFps[$normRunning];');
+        local.write('[$nextVideo]fps=$_canvasFps[$normNext];');
+        local.write('[$normRunning][$normNext]xfade=transition=$xfadeType:'
+            'duration=${_fmtFilterNum(duration)}:offset=${_fmtFilterNum(offset)}'
+            '[$outVideo];');
+        local.write(
+            '[$runningAudio][$nextAudio]acrossfade=d=${_fmtFilterNum(duration)}[$outAudio];');
+        runningDuration = runningDuration + clip.duration - duration;
+      } else {
+        local.write('[$runningVideo][$runningAudio][$nextVideo][$nextAudio]'
+            'concat=n=2:v=1:a=1[$outVideo][$outAudio];');
+        runningDuration += clip.duration;
+      }
+      runningVideo = outVideo;
+      runningAudio = outAudio;
+    }
+    final clauses = local.toString();
+    filter.write(
+        clauses.endsWith(';') ? clauses.substring(0, clauses.length - 1) : clauses);
+    return _JoinResult(video: runningVideo, audio: runningAudio);
   }
 
   /// Runs ffmpeg with [args], forwarding `-progress pipe:1` output as a 0..1
@@ -644,4 +741,12 @@ class _FilterGraph {
   final String videoLabel;
   final String audioLabel;
   final List<File> tempFiles;
+}
+
+/// The final (bare, unbracketed) video/audio pad labels produced by
+/// [FfmpegEngine._joinClips].
+class _JoinResult {
+  const _JoinResult({required this.video, required this.audio});
+  final String video;
+  final String audio;
 }

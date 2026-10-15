@@ -31,6 +31,8 @@ class Clip {
     double? saturation,
     this.filterId,
     this.effectId,
+    this.transitionId,
+    double? transitionDuration,
   })  : id = id ?? _uuid.v4(),
         inPoint = inPoint ?? 0,
         outPoint = outPoint ?? sourceDuration,
@@ -46,7 +48,8 @@ class Clip {
         fadeOut = fadeOut ?? 0.0,
         brightness = brightness ?? 0.0,
         contrast = contrast ?? 1.0,
-        saturation = saturation ?? 1.0;
+        saturation = saturation ?? 1.0,
+        transitionDuration = transitionDuration ?? 0.5;
 
   final String id;
   final String sourcePath;
@@ -132,6 +135,23 @@ class Clip {
   /// Name of the applied effect (a key into [kEffectPresets]), or null for
   /// none.
   String? effectId;
+  // ── transition ──
+  // Describes the transition that plays entering THIS clip FROM the previous
+  // one — i.e. it lives on the "into" side of the cut, not the "out of" side.
+  // The first clip on the timeline has no previous clip, so its transitionId
+  // is simply ignored by the engine even if set. See
+  // lib/domain/models/transition_presets.dart for the transitionId -> ffmpeg
+  // `xfade` mapping used on export.
+
+  /// Name of the applied transition preset (a key into
+  /// [kTransitionPresets]/the Transitions panel catalogue), or null for a
+  /// plain cut (the pre-feature default — export produces the exact same
+  /// output as before this feature existed).
+  String? transitionId;
+
+  /// Length of the transition, in seconds. Only meaningful when
+  /// [transitionId] is non-null. Defaults to 0.5s.
+  double transitionDuration;
 
   /// Length this clip contributes to the timeline, in seconds: the trimmed
   /// source region (clamped to source bounds) divided by [speed].
@@ -160,6 +180,9 @@ class Clip {
     bool clearFilterId = false,
     String? effectId,
     bool clearEffectId = false,
+    String? transitionId,
+    bool clearTransitionId = false,
+    double? transitionDuration,
   }) =>
       Clip(
         id: id,
@@ -182,6 +205,10 @@ class Clip {
         saturation: saturation ?? this.saturation,
         filterId: clearFilterId ? null : (filterId ?? this.filterId),
         effectId: clearEffectId ? null : (effectId ?? this.effectId),
+        transitionId: clearTransitionId
+            ? null
+            : (transitionId ?? this.transitionId),
+        transitionDuration: transitionDuration ?? this.transitionDuration,
       );
 
   Map<String, dynamic> toJson() => {
@@ -205,6 +232,8 @@ class Clip {
         'saturation': saturation,
         'filterId': filterId,
         'effectId': effectId,
+        'transitionId': transitionId,
+        'transitionDuration': transitionDuration,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -232,5 +261,7 @@ class Clip {
         saturation: (json['saturation'] as num?)?.toDouble(),
         filterId: json['filterId'] as String?,
         effectId: json['effectId'] as String?,
+        transitionId: json['transitionId'] as String?,
+        transitionDuration: (json['transitionDuration'] as num?)?.toDouble(),
       );
 }
