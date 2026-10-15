@@ -5,11 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_colors.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
+import 'audio_panel.dart';
 import 'captions_panel.dart';
 
 /// The left browser: its content depends on the active feature tab. The media
-/// (Import) and Captions browsers are wired; the rest are present as panels
-/// with their shape sketched in, ready to be filled.
+/// (Import), Audio and Captions browsers are wired; the rest are present as
+/// panels with their shape sketched in, ready to be filled.
 class BrowserPanel extends ConsumerWidget {
   const BrowserPanel({super.key});
 
@@ -20,6 +21,7 @@ class BrowserPanel extends ConsumerWidget {
       color: AppColors.panel,
       child: switch (tab) {
         EditorLeftTab.media => const _MediaBrowser(),
+        EditorLeftTab.audio => const AudioPanel(),
         EditorLeftTab.captions => const CaptionsPanel(),
         _ => _Placeholder(tab: tab),
       },

@@ -101,20 +101,35 @@ class FfmpegEngine implements Engine {
         ]);
       }
 
-      final filter = StringBuffer();
+      // Per-clip audio processing (volume + fades) is applied before the
+      // concat filter. A clip at its defaults (volume 1.0, no fades) needs no
+      // filter at all, so it feeds the concat straight from the input's audio
+      // stream — identical to the filtergraph before this feature existed.
+      final filterSegments = <String>[];
+      final concatInputs = StringBuffer();
       for (var i = 0; i < clips.length; i++) {
-        filter.write('[$i:v:0][$i:a:0]');
+        final chain = _audioFilterChain(clips[i]);
+        if (chain == null) {
+          concatInputs.write('[$i:v:0][$i:a:0]');
+        } else {
+          filterSegments.add('[$i:a:0]$chain[a$i]');
+          concatInputs.write('[$i:v:0][a$i]');
+        }
       }
-      filter.write('concat=n=${clips.length}:v=1:a=1[v0][outa]');
+      filterSegments
+          .add('$concatInputs' 'concat=n=${clips.length}:v=1:a=1[v0][outa]');
 
       var videoLabel = '[v0]';
       if (srtFile != null) {
-        filter.write(';[v0]subtitles=${_escapeFilterPath(srtFile.path)}[v1]');
+        filterSegments
+            .add('[v0]subtitles=${_escapeFilterPath(srtFile.path)}[v1]');
         videoLabel = '[v1]';
       }
 
+      final filter = filterSegments.join(';');
+
       args.addAll([
-        '-filter_complex', filter.toString(),
+        '-filter_complex', filter,
         '-map', videoLabel,
         '-map', '[outa]',
         '-c:v', 'libx264',
@@ -201,6 +216,29 @@ class FfmpegEngine implements Engine {
     return "'$escaped'";
   }
 
+  /// Builds the `volume`/`afade` filter chain for [clip]'s audio, or `null`
+  /// if it is at the defaults (volume 1.0, no fades) and therefore needs no
+  /// processing at all. Keeping the no-op case `null` (rather than e.g.
+  /// `volume=1.0`) is what keeps [export] fully additive: a timeline of
+  /// default clips produces the exact filtergraph it did before this feature
+  /// existed.
+  static String? _audioFilterChain(Clip clip) {
+    final parts = <String>[];
+    if (clip.volume != 1.0) {
+      parts.add('volume=${clip.volume.toStringAsFixed(3)}');
+    }
+    if (clip.fadeIn > 0) {
+      parts.add('afade=t=in:st=0:d=${clip.fadeIn.toStringAsFixed(3)}');
+    }
+    if (clip.fadeOut > 0) {
+      final start =
+          (clip.duration - clip.fadeOut).clamp(0, clip.duration);
+      parts.add(
+          'afade=t=out:st=${start.toStringAsFixed(3)}:d=${clip.fadeOut.toStringAsFixed(3)}');
+    }
+    return parts.isEmpty ? null : parts.join(',');
+  }
+
   @override
   Future<void> savePoster({
     required Clip clip,
@@ -217,6 +255,24 @@ class FfmpegEngine implements Engine {
     ]);
     if (result.exitCode != 0) {
       throw EngineException('poster extraction failed: ${result.stderr}');
+    }
+  }
+
+  @override
+  Future<void> extractAudio({
+    required Clip clip,
+    required String outputPath,
+  }) async {
+    final result = await Process.run(_ffmpeg, [
+      '-y',
+      '-ss', clip.inPoint.toStringAsFixed(3),
+      '-to', clip.outPoint.toStringAsFixed(3),
+      '-i', clip.sourcePath,
+      '-vn',
+      outputPath,
+    ]);
+    if (result.exitCode != 0) {
+      throw EngineException('audio extraction failed: ${result.stderr}');
     }
   }
 }

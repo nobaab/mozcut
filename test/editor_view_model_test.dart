@@ -124,4 +124,52 @@ void main() {
       expect(clipAt(0).duration, 10);
     });
   });
+
+  group('updateSelectedAudio', () {
+    test('sets volume on the selected clip', () {
+      editor.updateSelectedAudio(volume: 1.5);
+      expect(clipAt(0).volume, 1.5);
+    });
+
+    test('sets fadeIn and fadeOut independently', () {
+      editor.updateSelectedAudio(fadeIn: 0.5);
+      editor.updateSelectedAudio(fadeOut: 2);
+      expect(clipAt(0).fadeIn, 0.5);
+      expect(clipAt(0).fadeOut, 2);
+    });
+
+    test('omitted parameters are left unchanged', () {
+      editor.updateSelectedAudio(volume: 1.2, fadeIn: 1, fadeOut: 1);
+      editor.updateSelectedAudio(volume: 0.8);
+      expect(clipAt(0).volume, 0.8);
+      expect(clipAt(0).fadeIn, 1);
+      expect(clipAt(0).fadeOut, 1);
+    });
+
+    test('clamps volume to 0..2', () {
+      editor.updateSelectedAudio(volume: 5);
+      expect(clipAt(0).volume, 2);
+      editor.updateSelectedAudio(volume: -1);
+      expect(clipAt(0).volume, 0);
+    });
+
+    test('clamps fades to non-negative', () {
+      editor.updateSelectedAudio(fadeIn: -3, fadeOut: -3);
+      expect(clipAt(0).fadeIn, 0);
+      expect(clipAt(0).fadeOut, 0);
+    });
+
+    test('does not affect other clips', () {
+      editor.updateSelectedAudio(volume: 1.8);
+      expect(clipAt(1).volume, 1.0);
+      expect(clipAt(2).volume, 1.0);
+    });
+
+    test('does nothing when no clip is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.updateSelectedAudio(volume: 1.5), returnsNormally);
+    });
+  });
 }

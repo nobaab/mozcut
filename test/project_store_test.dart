@@ -33,6 +33,11 @@ class _NoEngine implements Engine {
     required String outputPath,
     int width = 480,
   }) async {}
+  @override
+  Future<void> extractAudio({
+    required Clip clip,
+    required String outputPath,
+  }) async {}
 }
 
 void main() {
