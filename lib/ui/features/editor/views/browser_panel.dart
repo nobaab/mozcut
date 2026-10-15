@@ -6,6 +6,11 @@ import '../../../core/app_colors.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 import 'captions_panel.dart';
+import 'effects_panel.dart';
+import 'filters_panel.dart';
+import 'stickers_panel.dart';
+import 'templates_panel.dart';
+import 'transitions_panel.dart';
 
 /// The left browser: its content depends on the active feature tab. The media
 /// (Import) and Captions browsers are wired; the rest are present as panels
@@ -21,6 +26,11 @@ class BrowserPanel extends ConsumerWidget {
       child: switch (tab) {
         EditorLeftTab.media => const _MediaBrowser(),
         EditorLeftTab.captions => const CaptionsPanel(),
+        EditorLeftTab.effects => const EffectsPanel(),
+        EditorLeftTab.filters => const FiltersPanel(),
+        EditorLeftTab.transitions => const TransitionsPanel(),
+        EditorLeftTab.stickers => const StickersPanel(),
+        EditorLeftTab.templates => const TemplatesPanel(),
         _ => _Placeholder(tab: tab),
       },
     );
