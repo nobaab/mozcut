@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../domain/models/clip.dart';
 import '../../../core/app_colors.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 
 /// The inspector, modelled on CapCut: Video / Audio / Speed / Animation /
 /// Adjustment tabs, with the Video tab's Basic / Remove BG / Mask / Retouch
-/// sub-tabs and the Transform + Blend sections. Transform controls are visual
-/// for now; Trim & Edit at the bottom are wired to the real engine.
+/// sub-tabs and the Transform + Blend sections. Transform (scale / position /
+/// rotation / flip) and Trim & Edit are wired to the real engine; Blend is
+/// still a visual placeholder.
 class InspectorPanel extends ConsumerWidget {
   const InspectorPanel({super.key});
 
@@ -114,12 +116,24 @@ class _VideoTab extends ConsumerWidget {
 
         if (sub == VideoSubTab.basic) ...[
           _SectionHeader('Transform'),
-          _sliderRow('Scale', 1.0, 0, 4, '100%'),
+          _scaleRow(editor, clip),
+          // Scale is a single uniform factor (no separate X/Y scale), so
+          // this toggle stays decorative — there is nothing to turn off.
           _toggleRow('Uniform scale', true),
-          _xyRow('Position', 'X', 'Y'),
-          _fieldRow('Rotate', '0°'),
+          _positionRow(editor, clip),
+          _rotateRow(editor, clip),
+          _flipRow(editor, clip),
           const SizedBox(height: 8),
-          _alignRow(),
+          _alignRow(editor),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              icon: const Icon(Icons.restart_alt, size: 15),
+              label: const Text('Reset transform'),
+              onPressed: editor.resetTransform,
+            ),
+          ),
           const SizedBox(height: 18),
           _SectionHeader('Blend', hasCheckbox: true),
           _sliderRow('Opacity', 1.0, 0, 1, '100%'),
@@ -184,21 +198,99 @@ class _VideoTab extends ConsumerWidget {
         ]),
       );
 
+  // ── Transform rows (wired to the selected clip) ──
+
+  /// Scale: 0% .. 400%, 100% = clip's "fit to canvas" size (see
+  /// Clip.scale / FfmpegEngine's filter chain).
+  Widget _scaleRow(Editor editor, Clip clip) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          SizedBox(width: 56, child: Text('Scale', style: _lbl)),
+          Expanded(
+            child: Slider(
+              value: clip.scale.clamp(0.0, 4.0).toDouble(),
+              min: 0,
+              max: 4,
+              onChanged: (v) => editor.updateTransform(scale: v),
+            ),
+          ),
+          SizedBox(
+            width: 56,
+            child: _LiveField(
+              value: (clip.scale * 100).round().toString(),
+              suffix: '%',
+              onChanged: (text) {
+                final v = double.tryParse(text);
+                if (v != null) editor.updateTransform(scale: v / 100);
+              },
+            ),
+          ),
+        ]),
+      );
+
+  /// Position: posX/posY are normalized -1..1 (see Clip's doc comments),
+  /// shown here as a percentage of half the canvas for readability.
+  Widget _positionRow(Editor editor, Clip clip) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          SizedBox(width: 56, child: Text('Position', style: _lbl)),
+          Expanded(
+            child: _LiveField(
+              value: (clip.posX * 100).round().toString(),
+              prefix: 'X',
+              onChanged: (text) {
+                final v = double.tryParse(text);
+                if (v != null) editor.updateTransform(posX: v / 100);
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _LiveField(
+              value: (clip.posY * 100).round().toString(),
+              prefix: 'Y',
+              onChanged: (text) {
+                final v = double.tryParse(text);
+                if (v != null) editor.updateTransform(posY: v / 100);
+              },
+            ),
+          ),
+        ]),
+      );
+
+  Widget _rotateRow(Editor editor, Clip clip) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          SizedBox(width: 90, child: Text('Rotate', style: _lbl)),
+          Expanded(
+            child: _LiveField(
+              value: clip.rotation.round().toString(),
+              suffix: '°',
+              onChanged: (text) {
+                final v = double.tryParse(text);
+                if (v != null) editor.updateTransform(rotation: v);
+              },
+            ),
+          ),
+        ]),
+      );
+
+  Widget _flipRow(Editor editor, Clip clip) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          Expanded(child: Text('Flip horizontal', style: _lbl)),
+          Switch(
+            value: clip.flipH,
+            onChanged: (v) => editor.updateTransform(flipH: v),
+          ),
+        ]),
+      );
+
   Widget _toggleRow(String label, bool on) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(children: [
           Expanded(child: Text(label, style: _lbl)),
           Switch(value: on, onChanged: (_) {}),
-        ]),
-      );
-
-  Widget _xyRow(String label, String a, String b) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(children: [
-          SizedBox(width: 56, child: Text(label, style: _lbl)),
-          Expanded(child: _miniField(a, '0')),
-          const SizedBox(width: 8),
-          Expanded(child: _miniField(b, '0')),
         ]),
       );
 
@@ -226,16 +318,31 @@ class _VideoTab extends ConsumerWidget {
         ]),
       );
 
-  Widget _alignRow() => Row(
+  /// Quick-align buttons: set posX/posY straight to an edge or center.
+  Widget _alignRow(Editor editor) => Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: const [
-          Icon(Icons.align_horizontal_left, size: 18),
-          Icon(Icons.align_horizontal_center, size: 18),
-          Icon(Icons.align_horizontal_right, size: 18),
-          Icon(Icons.align_vertical_top, size: 18),
-          Icon(Icons.align_vertical_center, size: 18),
-          Icon(Icons.align_vertical_bottom, size: 18),
+        children: [
+          _alignIcon(Icons.align_horizontal_left,
+              () => editor.updateTransform(posX: -1)),
+          _alignIcon(Icons.align_horizontal_center,
+              () => editor.updateTransform(posX: 0)),
+          _alignIcon(Icons.align_horizontal_right,
+              () => editor.updateTransform(posX: 1)),
+          _alignIcon(Icons.align_vertical_top,
+              () => editor.updateTransform(posY: -1)),
+          _alignIcon(Icons.align_vertical_center,
+              () => editor.updateTransform(posY: 0)),
+          _alignIcon(Icons.align_vertical_bottom,
+              () => editor.updateTransform(posY: 1)),
         ],
+      );
+
+  Widget _alignIcon(IconData icon, VoidCallback onTap) => InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: Icon(icon, size: 18),
+        ),
       );
 
   Widget _readonly(String label, String value) => Padding(
@@ -273,6 +380,91 @@ class _SectionHeader extends StatelessWidget {
           const Spacer(),
           Icon(Icons.expand_more,
               size: 18, color: Colors.white.withValues(alpha: 0.5)),
+        ]),
+      );
+}
+
+/// A compact numeric text field used by the Transform rows. Displays
+/// [value] (as text) and reports committed edits via [onChanged] — on
+/// Enter, or when the field loses focus. Re-syncs its text from [value]
+/// whenever it isn't focused, so external changes (slider drag, selecting
+/// a different clip, Reset) show up without clobbering live typing.
+class _LiveField extends StatefulWidget {
+  const _LiveField({
+    required this.value,
+    required this.onChanged,
+    this.prefix,
+    this.suffix,
+  });
+
+  final String value;
+  final ValueChanged<String> onChanged;
+  final String? prefix;
+  final String? suffix;
+
+  @override
+  State<_LiveField> createState() => _LiveFieldState();
+}
+
+class _LiveFieldState extends State<_LiveField> {
+  late final _controller = TextEditingController(text: widget.value);
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) widget.onChanged(_controller.text);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _LiveField old) {
+    super.didUpdateWidget(old);
+    if (!_focus.hasFocus && widget.value != _controller.text) {
+      _controller.text = widget.value;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: AppColors.well,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        alignment: Alignment.centerLeft,
+        child: Row(children: [
+          if (widget.prefix != null)
+            Text('${widget.prefix} ',
+                style: TextStyle(
+                    fontSize: 12, color: Colors.white.withValues(alpha: 0.4))),
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              focusNode: _focus,
+              style: const TextStyle(fontSize: 12),
+              textAlign: TextAlign.right,
+              keyboardType:
+                  const TextInputType.numberWithOptions(signed: true, decimal: true),
+              decoration: InputDecoration(
+                isDense: true,
+                isCollapsed: true,
+                border: InputBorder.none,
+                suffixText: widget.suffix,
+                suffixStyle: const TextStyle(fontSize: 12),
+              ),
+              onSubmitted: widget.onChanged,
+            ),
+          ),
         ]),
       );
 }

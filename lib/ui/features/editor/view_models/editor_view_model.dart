@@ -98,6 +98,37 @@ class Editor extends _$Editor {
     state = state.copyWith(clips: clips, selectedId: left.id);
   }
 
+  /// Updates the transform (scale / position / rotation / flip) of the
+  /// selected clip. Only the provided fields change; the rest are kept.
+  void updateTransform({
+    double? scale,
+    double? posX,
+    double? posY,
+    double? rotation,
+    bool? flipH,
+  }) {
+    _mapSelected((c) => c.copyWith(
+          // Guard against a zero/negative scale, which would collapse the
+          // ffmpeg filter chain to a zero-size frame.
+          scale: scale?.clamp(0.05, 8.0).toDouble(),
+          posX: posX?.clamp(-2.0, 2.0).toDouble(),
+          posY: posY?.clamp(-2.0, 2.0).toDouble(),
+          rotation: rotation,
+          flipH: flipH,
+        ));
+  }
+
+  /// Resets the selected clip's transform back to identity.
+  void resetTransform() {
+    _mapSelected((c) => c.copyWith(
+          scale: 1.0,
+          posX: 0.0,
+          posY: 0.0,
+          rotation: 0.0,
+          flipH: false,
+        ));
+  }
+
   void _mapSelected(Clip Function(Clip) f) {
     final idx = state.selectedIndex;
     if (idx < 0) return;

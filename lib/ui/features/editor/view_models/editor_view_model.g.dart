@@ -40,7 +40,7 @@ final class EditorProvider extends $NotifierProvider<Editor, EditorState> {
   }
 }
 
-String _$editorHash() => r'5897c17679ca7b8a8f6c5b4b33bbe9102e007e1f';
+String _$editorHash() => r'0188f71b0e288d0674547b20372e92c68383f391';
 
 abstract class _$Editor extends $Notifier<EditorState> {
   EditorState build();
