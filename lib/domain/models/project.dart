@@ -1,4 +1,5 @@
 import 'clip.dart';
+import 'text_overlay.dart';
 
 /// The output format of a project — the decisions the whole edit depends on.
 class VideoSettings {
@@ -36,9 +37,11 @@ class Project {
     required this.name,
     this.video = const VideoSettings(),
     List<Clip>? clips,
+    List<TextOverlay>? textOverlays,
     int? createdAt,
     int? modifiedAt,
   })  : clips = clips ?? [],
+        textOverlays = textOverlays ?? [],
         createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch,
         modifiedAt = modifiedAt ?? DateTime.now().millisecondsSinceEpoch;
 
@@ -47,6 +50,11 @@ class Project {
   String name;
   VideoSettings video;
   List<Clip> clips;
+
+  /// Text/title overlays, timed on the final concatenated timeline. See
+  /// [TextOverlay] for why these live at the project level rather than on a
+  /// clip.
+  List<TextOverlay> textOverlays;
   final int createdAt;
   int modifiedAt;
 
@@ -58,6 +66,7 @@ class Project {
         'name': name,
         'video': video.toJson(),
         'clips': clips.map((c) => c.toJson()).toList(),
+        'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
         'createdAt': createdAt,
         'modifiedAt': modifiedAt,
       };
@@ -71,6 +80,11 @@ class Project {
             : const VideoSettings(),
         clips: (j['clips'] as List? ?? [])
             .map((e) => Clip.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        // Absent in manifests written before this feature existed — defaults
+        // to an empty list, so opening an old project is unaffected.
+        textOverlays: (j['textOverlays'] as List? ?? [])
+            .map((e) => TextOverlay.fromJson(e as Map<String, dynamic>))
             .toList(),
         createdAt: (j['createdAt'] as num?)?.toInt(),
         modifiedAt: (j['modifiedAt'] as num?)?.toInt(),

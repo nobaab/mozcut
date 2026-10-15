@@ -7,6 +7,7 @@ import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
+import '../view_models/text_overlays_view_model.dart';
 
 /// The top bar, modelled on CapCut: project name in the middle, and the row of
 /// actions on the right (Shortcuts, Pro, Share, Export). Back to the launcher is
@@ -99,11 +100,15 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
         '$dir/vidkaat_export_${DateTime.now().millisecondsSinceEpoch}.mp4';
     final engine = ref.read(engineProvider);
     final clips = ref.read(editorProvider).clips;
+    final textOverlays = ref.read(textOverlaysProvider);
     final progress = ref.read(exportProgressProvider.notifier);
     progress.set(0);
     try {
       await engine.export(
-          clips: clips, outputPath: path, onProgress: progress.set);
+          clips: clips,
+          outputPath: path,
+          textOverlays: textOverlays,
+          onProgress: progress.set);
       if (context.mounted) _snack(context, 'Exported to $path');
     } catch (e) {
       if (context.mounted) _snack(context, 'Export failed: $e');

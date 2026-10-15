@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidkaat/domain/models/clip.dart';
 import 'package:vidkaat/domain/models/project.dart';
+import 'package:vidkaat/domain/models/text_overlay.dart';
 
 void main() {
   test('project survives a manifest round-trip', () {
@@ -10,6 +11,9 @@ void main() {
       video: const VideoSettings(width: 1080, height: 1920, fps: 30),
       clips: [
         Clip(sourcePath: '/v/a.mp4', sourceDuration: 20, inPoint: 2, outPoint: 9),
+      ],
+      textOverlays: [
+        TextOverlay(text: 'Title card', start: 0, end: 3, color: '#FF0000'),
       ],
     );
 
@@ -23,6 +27,19 @@ void main() {
     expect(restored.clips.length, 1);
     expect(restored.clips.first.duration, 7);
     expect(restored.clips.first.sourcePath, '/v/a.mp4');
+    expect(restored.textOverlays.length, 1);
+    expect(restored.textOverlays.first.text, 'Title card');
+    expect(restored.textOverlays.first.color, '#FF0000');
+  });
+
+  test('project defaults to no text overlays when the key is absent '
+      '(old manifests)', () {
+    final project = Project(folderPath: '/tmp/Old Project', name: 'Old');
+    final manifest = project.toManifest()..remove('textOverlays');
+
+    final restored = Project.fromManifest(project.folderPath, manifest);
+
+    expect(restored.textOverlays, isEmpty);
   });
 
   test('VideoSettings label formats whole and fractional fps', () {

@@ -6,10 +6,11 @@ import '../../../core/app_colors.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 import 'captions_panel.dart';
+import 'text_panel.dart';
 
 /// The left browser: its content depends on the active feature tab. The media
-/// (Import) and Captions browsers are wired; the rest are present as panels
-/// with their shape sketched in, ready to be filled.
+/// (Import), Captions and Text browsers are wired; the rest are present as
+/// panels with their shape sketched in, ready to be filled.
 class BrowserPanel extends ConsumerWidget {
   const BrowserPanel({super.key});
 
@@ -21,6 +22,7 @@ class BrowserPanel extends ConsumerWidget {
       child: switch (tab) {
         EditorLeftTab.media => const _MediaBrowser(),
         EditorLeftTab.captions => const CaptionsPanel(),
+        EditorLeftTab.text => const TextPanel(),
         _ => _Placeholder(tab: tab),
       },
     );
