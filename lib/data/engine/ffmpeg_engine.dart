@@ -28,6 +28,14 @@ class FfmpegEngine implements Engine {
   final String _ffmpeg;
   final String _ffprobe;
 
+  // The engine interface doesn't (yet) carry the project's VideoSettings, so
+  // export assumes the standard 1920x1080 canvas every clip's transform is
+  // expressed against. When Engine.export grows a `VideoSettings` parameter,
+  // thread it through here instead of this constant.
+  static const _canvasWidth = 1920;
+  static const _canvasHeight = 1080;
+  static const _canvasFps = 30;
+
   static const _candidateDirs = [
     '/opt/homebrew/bin',
     '/usr/local/bin',
@@ -101,16 +109,29 @@ class FfmpegEngine implements Engine {
         ]);
       }
 
+      // Per-input filter chain applying each clip's transform, then concat,
+      // then (if any clip has captions) burn subtitles onto the joined video.
+      //
+      // Every clip — even an untouched one — runs through the same transform
+      // chain (see _videoFilterChain) so every input lands on the identical
+      // `_canvasWidth`x`_canvasHeight` canvas; concat requires matching frame
+      // sizes and sources may differ. Captions are then applied to the
+      // concatenated video so their timing lines up with the final timeline.
       final filter = StringBuffer();
+      final videoLabels = <String>[];
       for (var i = 0; i < clips.length; i++) {
-        filter.write('[$i:v:0][$i:a:0]');
+        videoLabels.add(_videoFilterChain(filter, i, clips[i]));
       }
-      filter.write('concat=n=${clips.length}:v=1:a=1[v0][outa]');
+      for (var i = 0; i < clips.length; i++) {
+        filter.write('[${videoLabels[i]}][$i:a:0]');
+      }
+      filter.write('concat=n=${clips.length}:v=1:a=1[vcat][outa]');
 
-      var videoLabel = '[v0]';
+      var videoLabel = '[vcat]';
       if (srtFile != null) {
-        filter.write(';[v0]subtitles=${_escapeFilterPath(srtFile.path)}[v1]');
-        videoLabel = '[v1]';
+        filter.write(
+            ';[vcat]subtitles=${_escapeFilterPath(srtFile.path)}[vout]');
+        videoLabel = '[vout]';
       }
 
       args.addAll([
@@ -199,6 +220,54 @@ class FfmpegEngine implements Engine {
         .replaceAll(':', '\\:')
         .replaceAll("'", "\\'");
     return "'$escaped'";
+  }
+
+  /// Writes clip [i]'s transform filter chain into [filter] and returns the
+  /// output pad label (without brackets) to feed into concat.
+  String _videoFilterChain(StringBuffer filter, int i, Clip clip) {
+    final bg = 'bg$i';
+    final fg = 'fg$i';
+    final out = 'v$i';
+
+    // 1. A black canvas-sized background. `color` is a zero-input source
+    // filter — no extra `-i` needed. It's infinite; `overlay`'s shortest=1
+    // below trims the result to the (finite) foreground's duration.
+    filter.write(
+      'color=c=black:s=${_canvasWidth}x$_canvasHeight:r=$_canvasFps[$bg];',
+    );
+
+    // 2. Foreground: fit into the canvas ("contain", preserving aspect
+    // ratio — ffmpeg computes this from the real source size at run time,
+    // so no probing of pixel dimensions is needed here), then the clip's
+    // own `scale` on top of that fit, then flip/rotate.
+    final steps = <String>[
+      'scale=w=$_canvasWidth:h=$_canvasHeight:force_original_aspect_ratio=decrease',
+      // trunc(.../2)*2 keeps dimensions even, which libx264 requires.
+      "scale=w='trunc(iw*${clip.scale}/2)*2':h='trunc(ih*${clip.scale}/2)*2'",
+    ];
+    if (clip.flipH) steps.add('hflip');
+    if (clip.rotation != 0) {
+      final radians = clip.rotation * 3.141592653589793 / 180.0;
+      // Expands the bounding box to fit the rotated frame (rotw()/roth()
+      // are ffmpeg's rotate-filter helper functions for exactly this —
+      // the bare `rotw`/`roth` constants only exist inside them); the
+      // corners this exposes are filled black, matching the background.
+      steps.add('rotate=$radians:ow=rotw($radians):oh=roth($radians):c=black');
+    }
+    filter.write('[$i:v:0]${steps.join(',')}[$fg];');
+
+    // 3. Composite the foreground onto the background, offset from center
+    // by posX/posY (fractions of half the canvas size — see Clip's doc
+    // comments). `overlay` clips anything outside the canvas automatically,
+    // so a scale > 1 ("zoomed in") frame is cropped rather than erroring.
+    final offsetX = clip.posX * _canvasWidth / 2;
+    final offsetY = clip.posY * _canvasHeight / 2;
+    filter.write(
+      "[$bg][$fg]overlay=x='(W-w)/2+($offsetX)':y='(H-h)/2+($offsetY)':"
+      "shortest=1,setsar=1,format=yuv420p[$out];",
+    );
+
+    return out;
   }
 
   @override

@@ -7,20 +7,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vidkaat/data/engine/ffmpeg_engine.dart';
 import 'package:vidkaat/domain/models/clip.dart';
 
+/// Up to [n] real video files from the user's Documents folder, so the test
+/// doesn't depend on one hard-coded filename that may be deleted.
+List<String> sampleVideos([int n = 2]) {
+  final dir = Directory('/Users/nobaab/Documents');
+  if (!dir.existsSync()) return const [];
+  final vids = dir
+      .listSync()
+      .whereType<File>()
+      .map((f) => f.path)
+      .where((p) => p.toLowerCase().endsWith('.mp4'))
+      .toList()
+    ..sort();
+  return vids.take(n).toList();
+}
+
 /// Exercises the real FfmpegEngine against real files on disk.
 /// Run with: flutter test test/engine_integration_test.dart
 void main() {
   final engine = FfmpegEngine();
-
-  const a = '/Users/nobaab/Documents/2026-10-09 03-32-53.mp4';
-  const b = '/Users/nobaab/Documents/2026-10-06 21-03-11.mp4';
+  final videos = sampleVideos(2);
+  final skip =
+      videos.length < 2 ? 'needs ≥2 .mp4 files in ~/Documents' : null;
 
   test('probeDuration reads real durations', () async {
-    final da = await engine.probeDuration(a);
-    final db = await engine.probeDuration(b);
-    expect(da, greaterThan(900));
-    expect(db, greaterThan(400));
-  });
+    for (final v in videos) {
+      expect(await engine.probeDuration(v), greaterThan(0));
+    }
+  }, skip: skip);
 
   test('probeDuration throws on a non-media file', () async {
     final junk = File('${Directory.systemTemp.path}/not_a_video.txt')
@@ -30,30 +44,32 @@ void main() {
   });
 
   test('export trims two clips and concats them into a valid MP4', () async {
-    // Take a 3s slice from each source.
-    final clips = [
-      Clip(sourcePath: a, sourceDuration: 1003, inPoint: 10, outPoint: 13),
-      Clip(sourcePath: b, sourceDuration: 455, inPoint: 5, outPoint: 8),
-    ];
+    // Take a short slice from each source (clamped to its real duration).
+    final clips = <Clip>[];
+    for (final v in videos) {
+      final dur = await engine.probeDuration(v);
+      clips.add(Clip(
+          sourcePath: v,
+          sourceDuration: dur,
+          inPoint: 0,
+          outPoint: dur < 3 ? dur : 3));
+    }
+    final expected = clips.fold<double>(0, (s, c) => s + c.duration);
 
-    final out = '${Directory.systemTemp.path}/vidkaat_it_${DateTime.now().millisecondsSinceEpoch}.mp4';
+    final out =
+        '${Directory.systemTemp.path}/vidkaat_it_${DateTime.now().millisecondsSinceEpoch}.mp4';
     var lastProgress = 0.0;
-
     await engine.export(
-      clips: clips,
-      outputPath: out,
-      onProgress: (p) => lastProgress = p,
-    );
+        clips: clips, outputPath: out, onProgress: (p) => lastProgress = p);
 
     final file = File(out);
-    expect(file.existsSync(), isTrue, reason: 'output file should exist');
-    expect(file.lengthSync(), greaterThan(1000), reason: 'output should not be empty');
-    expect(lastProgress, 1.0, reason: 'progress should reach 100%');
+    expect(file.existsSync(), isTrue);
+    expect(file.lengthSync(), greaterThan(1000));
+    expect(lastProgress, 1.0);
 
-    // The result should be ~6s (3 + 3), allow encoder slack.
-    final outDuration = await engine.probeDuration(out);
-    expect(outDuration, inInclusiveRange(5.0, 7.5));
+    final outDur = await engine.probeDuration(out);
+    expect(outDur, inInclusiveRange(expected - 1.5, expected + 1.5));
 
     file.deleteSync();
-  }, timeout: const Timeout(Duration(minutes: 3)));
+  }, timeout: const Timeout(Duration(minutes: 3)), skip: skip);
 }

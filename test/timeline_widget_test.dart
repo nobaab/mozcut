@@ -89,4 +89,58 @@ void main() {
     expect(clips[1].duration, closeTo(7, 0.001));
     expect(find.text('clip.mp4'), findsNWidgets(2));
   });
+
+  test('updateTransform mutates only the selected clip, partial updates keep the rest',
+      () async {
+    final container = ProviderContainer(
+      overrides: [engineProvider.overrideWithValue(FakeEngine())],
+    );
+    addTearDown(container.dispose);
+    final editor = container.read(editorProvider.notifier);
+
+    await editor.addClip('/a/clip.mp4');
+    await editor.addClip('/b/clip.mp4'); // selected
+
+    editor.updateTransform(scale: 2.0, posX: 0.5, rotation: 45, flipH: true);
+
+    final selected = container.read(editorProvider).selected!;
+    expect(selected.scale, 2.0);
+    expect(selected.posX, 0.5);
+    expect(selected.posY, 0.0); // untouched field keeps its default
+    expect(selected.rotation, 45);
+    expect(selected.flipH, isTrue);
+
+    // The other (unselected) clip is untouched.
+    final other = container.read(editorProvider).clips.first;
+    expect(other.scale, 1.0);
+    expect(other.flipH, isFalse);
+
+    // A later partial update only changes what's passed.
+    editor.updateTransform(posY: -0.5);
+    final updated = container.read(editorProvider).selected!;
+    expect(updated.posY, -0.5);
+    expect(updated.scale, 2.0, reason: 'unrelated fields stay as they were');
+
+    // resetTransform() brings it back to identity.
+    editor.resetTransform();
+    final reset = container.read(editorProvider).selected!;
+    expect(reset.scale, 1.0);
+    expect(reset.posX, 0.0);
+    expect(reset.posY, 0.0);
+    expect(reset.rotation, 0.0);
+    expect(reset.flipH, isFalse);
+  });
+
+  test('updateTransform clamps scale away from zero', () async {
+    final container = ProviderContainer(
+      overrides: [engineProvider.overrideWithValue(FakeEngine())],
+    );
+    addTearDown(container.dispose);
+    final editor = container.read(editorProvider.notifier);
+
+    await editor.addClip('/a/clip.mp4');
+    editor.updateTransform(scale: 0.0);
+
+    expect(container.read(editorProvider).selected!.scale, greaterThan(0.0));
+  });
 }
