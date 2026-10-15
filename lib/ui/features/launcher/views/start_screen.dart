@@ -34,7 +34,7 @@ class StartScreen extends ConsumerWidget {
               // Heading
               Row(
                 children: [
-                  const Text('✂️  Vidkaat',
+                  const Text('✂️  MozCut',
                       style: TextStyle(
                           fontSize: 20, fontWeight: FontWeight.w700)),
                   const Spacer(),
@@ -117,7 +117,7 @@ class StartScreen extends ConsumerWidget {
   Future<void> _openFromDisk(BuildContext context, WidgetRef ref) async {
     await FilePicker.skipEntitlementsChecks();
     final dir = await FilePicker.getDirectoryPath(
-        dialogTitle: 'Open a Vidkaat project folder');
+        dialogTitle: 'Open a MozCut project folder');
     if (dir == null) return;
     if (context.mounted) await _open(context, ref, dir);
   }

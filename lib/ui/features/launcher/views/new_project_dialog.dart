@@ -59,7 +59,7 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
 
   Future<void> _resolveDefaultLocation() async {
     final docs = await getApplicationDocumentsDirectory();
-    final dir = '${docs.path}/Vidkaat Projects';
+    final dir = '${docs.path}/MozCut Projects';
     if (mounted) setState(() => _location = dir);
   }
 

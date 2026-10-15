@@ -35,7 +35,7 @@ const _kFilterCategories = <String>[
 const _kFilterChips = <String>['All', ..._kFilterCategories];
 
 /// Concat's full 57-filter catalogue (docs/FEATURES.md Appendix), used as the
-/// target list for Vidkaat's own filter browser.
+/// target list for MozCut's own filter browser.
 const _kFilters = <FilterPreset>[
   // Cinematic (13)
   FilterPreset('Bleach Bypass', 'Cinematic'),

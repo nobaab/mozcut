@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/ui/features/editor/views/effects_panel.dart';
+import 'package:mozcut/ui/features/editor/views/effects_panel.dart';
 
 void main() {
   testWidgets('effects panel renders an effect name', (tester) async {

@@ -5,8 +5,8 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/data/engine/ffmpeg_engine.dart';
-import 'package:vidkaat/ui/features/editor/view_models/editor_view_model.dart';
+import 'package:mozcut/data/engine/ffmpeg_engine.dart';
+import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
 
 /// Up to [n] real video files from the user's Documents folder.
 List<String> sampleVideos([int n = 2]) {
@@ -78,7 +78,7 @@ void main() {
     // --- EXPORT ---
     final engine = container.read(engineProvider);
     final out =
-        '${Directory.systemTemp.path}/vidkaat_e2e_${DateTime.now().millisecondsSinceEpoch}.mp4';
+        '${Directory.systemTemp.path}/mozcut_e2e_${DateTime.now().millisecondsSinceEpoch}.mp4';
     var progress = 0.0;
     await engine.export(
       clips: container.read(editorProvider).clips,

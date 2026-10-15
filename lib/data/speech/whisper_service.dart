@@ -92,7 +92,7 @@ class WhisperService {
       );
     }
 
-    final tempDir = await Directory.systemTemp.createTemp('vidkaat_whisper_');
+    final tempDir = await Directory.systemTemp.createTemp('mozcut_whisper_');
     try {
       onStatus?.call('Extracting audio…');
       final wavPath = '${tempDir.path}/audio.wav';

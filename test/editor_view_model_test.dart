@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/domain/models/clip.dart';
-import 'package:vidkaat/ui/features/editor/view_models/editor_view_model.dart';
+import 'package:mozcut/domain/models/clip.dart';
+import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
 
 /// Covers the timeline-interaction additions to the [Editor] notifier:
 /// drag-to-reorder and the per-clip trim handles. Pure view-model logic, no

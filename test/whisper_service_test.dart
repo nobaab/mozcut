@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/data/speech/whisper_service.dart';
+import 'package:mozcut/data/speech/whisper_service.dart';
 
 /// Pure parsing tests — no whisper.cpp binary required. [parseSrt] is the
 /// boundary between "what whisper.cpp printed" and our Caption model, so it

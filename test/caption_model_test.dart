@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/domain/models/caption.dart';
-import 'package:vidkaat/domain/models/clip.dart';
+import 'package:mozcut/domain/models/caption.dart';
+import 'package:mozcut/domain/models/clip.dart';
 
 void main() {
   test('Caption survives a JSON round-trip', () {

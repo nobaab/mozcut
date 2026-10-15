@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/domain/models/text_overlay.dart';
-import 'package:vidkaat/ui/features/editor/view_models/text_overlays_view_model.dart';
+import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/ui/features/editor/view_models/text_overlays_view_model.dart';
 
 void main() {
   group('TextOverlay', () {

@@ -1,12 +1,12 @@
 <div align="center">
 
-# ✂️ Vidkaat
+# ✂️ MozCut
 
 ### The free, open-source CapCut alternative — on your desktop.
 
 No subscription. No watermark. No account. No upload. Ever.
 
-<img src="assets/screenshot.png" alt="Vidkaat editor" width="85%" />
+<img src="assets/screenshot.png" alt="MozCut editor" width="85%" />
 
 <p>
   <a href="#"><img src="https://img.shields.io/badge/License-MIT-0568FD?style=flat-square" alt="License: MIT" /></a>
@@ -22,7 +22,7 @@ No subscription. No watermark. No account. No upload. Ever.
 
 ## About
 
-**Vidkaat** is a free, open-source video editor for desktop — a CapCut alternative
+**MozCut** is a free, open-source video editor for desktop — a CapCut alternative
 that does the things people actually open an editor for: cut, trim, split, join
 clips, and export clean video. No subscription wall, no watermark baked into your
 export, no account, and nothing is ever uploaded. Your footage stays on your disk.
@@ -86,8 +86,8 @@ Rust) engine can implement the **same interface** — and not a line of UI chang
 ### Run it
 
 ```sh
-git clone https://github.com/nobaab/vidkaat.git
-cd vidkaat
+git clone https://github.com/nobaab/mozcut.git
+cd mozcut
 flutter pub get
 flutter run -d macos   # or -d windows / -d linux
 ```
@@ -101,7 +101,7 @@ flutter test --tags integration   # real ffmpeg end-to-end tests
 
 ## 🗺️ Roadmap
 
-- [x] Project launcher: new project, recent-projects grid, open/save `vidkaat.json`
+- [x] Project launcher: new project, recent-projects grid, open/save `mozcut.json`
 - [ ] Project launcher extras: templates row, grid/list toggle, sort, rename/duplicate
 - [ ] Full timeline-sequence preview (not just one clip at a time)
 - [ ] Drag to reorder / trim clips directly on the timeline
@@ -124,5 +124,5 @@ can talk it through.
 ---
 
 <div align="center">
-<sub>Built in the open. If Vidkaat saves you a CapCut subscription, drop a ⭐.</sub>
+<sub>Built in the open. If MozCut saves you a CapCut subscription, drop a ⭐.</sub>
 </div>

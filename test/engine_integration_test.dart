@@ -4,8 +4,8 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/data/engine/ffmpeg_engine.dart';
-import 'package:vidkaat/domain/models/clip.dart';
+import 'package:mozcut/data/engine/ffmpeg_engine.dart';
+import 'package:mozcut/domain/models/clip.dart';
 
 /// Up to [n] real video files from the user's Documents folder, so the test
 /// doesn't depend on one hard-coded filename that may be deleted.
@@ -57,7 +57,7 @@ void main() {
     final expected = clips.fold<double>(0, (s, c) => s + c.duration);
 
     final out =
-        '${Directory.systemTemp.path}/vidkaat_it_${DateTime.now().millisecondsSinceEpoch}.mp4';
+        '${Directory.systemTemp.path}/mozcut_it_${DateTime.now().millisecondsSinceEpoch}.mp4';
     var lastProgress = 0.0;
     await engine.export(
         clips: clips, outputPath: out, onProgress: (p) => lastProgress = p);

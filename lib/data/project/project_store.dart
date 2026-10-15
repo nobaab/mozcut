@@ -20,7 +20,7 @@ Future<List<RecentProject>> recents(Ref ref) =>
 
 /// Reads and writes projects on disk, and the machine's recents list.
 ///
-/// A project is a folder with a `vidkaat.json` manifest. The recents list lives
+/// A project is a folder with a `mozcut.json` manifest. The recents list lives
 /// in the app's support directory — it is this machine's history and never
 /// travels inside a project folder (same rule as Concat).
 class ProjectStore {
@@ -53,11 +53,18 @@ class ProjectStore {
     return project;
   }
 
-  /// Opens an existing project folder by reading its manifest.
+  /// Opens an existing project folder by reading its manifest. Falls back to
+  /// the pre-rename `vidkaat.json` name so projects made before the rename to
+  /// MozCut still open.
   Future<Project> open(String folderPath) async {
-    final manifest = File('$folderPath/${Project.manifestName}');
+    var manifest = File('$folderPath/${Project.manifestName}');
     if (!manifest.existsSync()) {
-      throw ProjectException('No $folderPath/${Project.manifestName} found.');
+      final legacy = File('$folderPath/vidkaat.json');
+      if (legacy.existsSync()) {
+        manifest = legacy;
+      } else {
+        throw ProjectException('No $folderPath/${Project.manifestName} found.');
+      }
     }
     final json = jsonDecode(await manifest.readAsString()) as Map<String, dynamic>;
     final project = Project.fromManifest(folderPath, json);

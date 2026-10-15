@@ -1,10 +1,10 @@
-# Vidkaat — Feature Catalogue & Roadmap
+# MozCut — Feature Catalogue & Roadmap
 
-An exhaustive feature list of the two editors Vidkaat is modelled on — **CapCut**
+An exhaustive feature list of the two editors MozCut is modelled on — **CapCut**
 (desktop) and **Concat** (the open-source Rust editor) — merged into one reference
 so we can build toward feature parity.
 
-**Legend (Vidkaat column):** ✅ done · 🚧 UI scaffolded (no logic yet) · 🔜 planned · — not started
+**Legend (MozCut column):** ✅ done · 🚧 UI scaffolded (no logic yet) · 🔜 planned · — not started
 **Source columns:** ✅ has it · — doesn't / N/A
 
 > Concat's built-in effect/filter/transition/audio catalogue is listed in full in
@@ -15,7 +15,7 @@ so we can build toward feature parity.
 
 ## 1. Import / Media
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Local import (video/audio/image/GIF) | ✅ | ✅ | ✅ |
 | Wide format support (MP4/MOV/MKV/WebM/AVI/M4V…) | ✅ | ✅ | ✅ (via FFmpeg) |
@@ -33,7 +33,7 @@ so we can build toward feature parity.
 
 ## 2. Timeline Editing
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Multi-track timeline | ✅ | ✅ | 🔜 (single track now) |
 | Split at playhead | ✅ | ✅ | ✅ |
@@ -62,7 +62,7 @@ so we can build toward feature parity.
 
 ## 3. Video Adjustments
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Transform: scale / position / rotate | ✅ | ✅ | 🚧 |
 | Crop | ✅ | ✅ | 🔜 |
@@ -88,7 +88,7 @@ so we can build toward feature parity.
 
 ## 4. AI Features
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Auto captions (speech-to-text) | ✅ | ✅ (Whisper, local) | 🚧 |
 | Caption translation | ✅ | — | 🔜 |
@@ -107,13 +107,13 @@ so we can build toward feature parity.
 | Audio denoise / enhance | ✅ | ✅ | 🔜 |
 | **Runs 100% locally / offline** | — (cloud) | ✅ | ✅ (goal) |
 
-> **Vidkaat's edge:** Concat proves CapCut's whole AI bundle can run **locally and
+> **MozCut's edge:** Concat proves CapCut's whole AI bundle can run **locally and
 > offline** (Whisper, Kokoro, ONNX cutout). That's our differentiator vs CapCut's
 > cloud + paywall model.
 
 ## 5. Audio
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Music / SFX library | ✅ | — | 🔜 |
 | Extract audio from video | ✅ | ✅ | 🔜 |
@@ -133,7 +133,7 @@ so we can build toward feature parity.
 
 ## 6. Text & Captions
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Text boxes + styling (color/size/align/spacing) | ✅ | ✅ | 🚧 |
 | Fonts library | ✅ | ✅ | 🔜 |
@@ -149,7 +149,7 @@ so we can build toward feature parity.
 
 ## 7. Effects, Filters & Transitions
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Video effects | ✅ | ✅ (21) | 🚧 |
 | Filters (color/style presets) | ✅ | ✅ (57) | 🚧 |
@@ -163,7 +163,7 @@ so we can build toward feature parity.
 
 ## 8. Templates
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Project templates ("replace clips") | ✅ | ✅ (template API) | 🚧 (tab) |
 | Aspect-ratio presets (16:9/9:16/1:1/4:5…) | ✅ | ✅ | ✅ (new-project presets) |
@@ -172,7 +172,7 @@ so we can build toward feature parity.
 
 ## 9. Export / Output
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | Resolution up to 4K | ✅ | ✅ (4K 60) | 🔜 (follows source) |
 | Frame rate 24–60 | ✅ | ✅ | 🔜 |
@@ -191,12 +191,12 @@ so we can build toward feature parity.
 
 ## 10. Platform, Workflow & Scripting
 
-| Feature | CapCut | Concat | Vidkaat |
+| Feature | CapCut | Concat | MozCut |
 |---|:--:|:--:|:--:|
 | macOS / Windows / Linux | ✅ | ✅ | ✅ (macOS; Win/Linux next) |
 | Android | ✅ | ✅ | 🔜 |
 | Project launcher (new / recents) | ✅ | ✅ | ✅ |
-| Project = folder + manifest | ✅ (draft folder) | ✅ (concat.json) | ✅ (vidkaat.json) |
+| Project = folder + manifest | ✅ (draft folder) | ✅ (concat.json) | ✅ (mozcut.json) |
 | Autosave / save project | ✅ | ✅ | ✅ (save) |
 | Resizable / dockable panels | ✅ | ✅ (dockable) | ✅ (resizable) |
 | Keyboard shortcuts | ✅ | ✅ | 🔜 |
@@ -212,7 +212,7 @@ so we can build toward feature parity.
 ## Appendix — Concat's built-in catalogue
 
 Concat ships **123 effect packages** (loaded from TOML + WGSL manifests). A target
-list for Vidkaat's own catalogue.
+list for MozCut's own catalogue.
 
 ### Transitions (20)
 Dissolve, Blur Dissolve, Film Burn, Glitch, Glitch Warp, RGB Split, Cube, Light

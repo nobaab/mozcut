@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/domain/models/export_settings.dart';
+import 'package:mozcut/domain/models/export_settings.dart';
 
 void main() {
   group('ExportSettings defaults', () {

@@ -11,16 +11,16 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // media_kit needs this once before any Player is created.
   MediaKit.ensureInitialized();
-  runApp(const ProviderScope(child: VidkaatApp()));
+  runApp(const ProviderScope(child: MozCutApp()));
 }
 
-class VidkaatApp extends StatelessWidget {
-  const VidkaatApp({super.key});
+class MozCutApp extends StatelessWidget {
+  const MozCutApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Vidkaat',
+      title: 'MozCut',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,
       home: const _Root(),

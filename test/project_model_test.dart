@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/domain/models/clip.dart';
-import 'package:vidkaat/domain/models/project.dart';
-import 'package:vidkaat/domain/models/text_overlay.dart';
+import 'package:mozcut/domain/models/clip.dart';
+import 'package:mozcut/domain/models/project.dart';
+import 'package:mozcut/domain/models/text_overlay.dart';
 
 void main() {
   test('project survives a manifest round-trip', () {

@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
-import 'package:vidkaat/data/engine/engine.dart';
-import 'package:vidkaat/domain/models/clip.dart';
-import 'package:vidkaat/domain/models/export_settings.dart';
-import 'package:vidkaat/domain/models/project.dart';
-import 'package:vidkaat/domain/models/text_overlay.dart';
-import 'package:vidkaat/data/project/project_store.dart';
+import 'package:mozcut/data/engine/engine.dart';
+import 'package:mozcut/domain/models/clip.dart';
+import 'package:mozcut/domain/models/export_settings.dart';
+import 'package:mozcut/domain/models/project.dart';
+import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/data/project/project_store.dart';
 
 /// Points path_provider at a temp dir so the recents file lands somewhere real.
 class _FakePathProvider extends PathProviderPlatform
@@ -49,7 +49,7 @@ void main() {
   late ProjectStore store;
 
   setUp(() {
-    tmp = Directory.systemTemp.createTempSync('vidkaat_store_');
+    tmp = Directory.systemTemp.createTempSync('mozcut_store_');
     PathProviderPlatform.instance = _FakePathProvider('${tmp.path}/support');
     Directory('${tmp.path}/support').createSync(recursive: true);
     store = ProjectStore(_NoEngine());

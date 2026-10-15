@@ -13,7 +13,7 @@ import '../view_models/text_overlays_view_model.dart';
 
 /// The top bar, modelled on CapCut: project name in the middle, and the row of
 /// actions on the right (Shortcuts, Pro, Share, Export). Back to the launcher is
-/// on the left — our own addition, since Vidkaat has a project launcher.
+/// on the left — our own addition, since MozCut has a project launcher.
 class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
   const EditorTitleBar({super.key});
 
@@ -22,7 +22,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final name = ref.watch(appProvider)?.name ?? 'Vidkaat';
+    final name = ref.watch(appProvider)?.name ?? 'MozCut';
     final progress = ref.watch(exportProgressProvider);
     final exporting = progress != null;
     final hasClips = ref.watch(editorProvider).clips.isNotEmpty;
@@ -101,7 +101,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
     final dir = await FilePicker.getDirectoryPath(
         dialogTitle: 'Choose where to export');
     if (dir == null) return;
-    final path = '$dir/vidkaat_export_${DateTime.now().millisecondsSinceEpoch}'
+    final path = '$dir/mozcut_export_${DateTime.now().millisecondsSinceEpoch}'
         '.${settings.fileExtension}';
     final engine = ref.read(engineProvider);
     final clips = ref.read(editorProvider).clips;

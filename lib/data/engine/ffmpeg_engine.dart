@@ -95,7 +95,7 @@ class FfmpegEngine implements Engine {
     File? srtFile;
     if (clips.any((c) => c.captions.isNotEmpty)) {
       srtFile = File(
-          '${Directory.systemTemp.path}/vidkaat_captions_${DateTime.now().millisecondsSinceEpoch}.srt');
+          '${Directory.systemTemp.path}/mozcut_captions_${DateTime.now().millisecondsSinceEpoch}.srt');
       await srtFile.writeAsString(_buildSrt(clips));
     }
 
@@ -183,7 +183,7 @@ class FfmpegEngine implements Engine {
         final fontFile = _resolveFont();
         for (var i = 0; i < textOverlays.length; i++) {
           final textFile = File(
-              '${Directory.systemTemp.path}/vidkaat_text_${DateTime.now().millisecondsSinceEpoch}_$i.txt');
+              '${Directory.systemTemp.path}/mozcut_text_${DateTime.now().millisecondsSinceEpoch}_$i.txt');
           await textFile.writeAsString(textOverlays[i].text);
           overlayFiles.add(textFile);
 

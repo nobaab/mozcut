@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vidkaat/ui/features/editor/views/stickers_panel.dart';
+import 'package:mozcut/ui/features/editor/views/stickers_panel.dart';
 
 void main() {
   testWidgets('shows the emoji category by default with a populated grid',

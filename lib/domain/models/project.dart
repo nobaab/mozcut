@@ -28,7 +28,7 @@ class VideoSettings {
       );
 }
 
-/// A project: a folder on disk holding `vidkaat.json`, plus the edit it
+/// A project: a folder on disk holding `mozcut.json`, plus the edit it
 /// describes. Mirrors Concat's model — a project is a real thing from the
 /// moment it is created, not a promise to save later.
 class Project {
@@ -58,11 +58,11 @@ class Project {
   final int createdAt;
   int modifiedAt;
 
-  static const manifestName = 'vidkaat.json';
+  static const manifestName = 'mozcut.json';
   static const formatVersion = '0.2.0';
 
   Map<String, dynamic> toManifest() => {
-        'vidkaat': formatVersion,
+        'mozcut': formatVersion,
         'name': name,
         'video': video.toJson(),
         'clips': clips.map((c) => c.toJson()).toList(),
