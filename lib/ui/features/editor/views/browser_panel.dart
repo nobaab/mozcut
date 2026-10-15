@@ -15,6 +15,10 @@ import 'transitions_panel.dart';
 
 /// The left browser: its content depends on the active feature tab. The media
 /// (Import), Audio and Captions browsers are wired; the rest are present as
+import 'text_panel.dart';
+
+/// The left browser: its content depends on the active feature tab. The media
+/// (Import), Captions and Text browsers are wired; the rest are present as
 /// panels with their shape sketched in, ready to be filled.
 class BrowserPanel extends ConsumerWidget {
   const BrowserPanel({super.key});
@@ -33,7 +37,7 @@ class BrowserPanel extends ConsumerWidget {
         EditorLeftTab.transitions => const TransitionsPanel(),
         EditorLeftTab.stickers => const StickersPanel(),
         EditorLeftTab.templates => const TemplatesPanel(),
-        _ => _Placeholder(tab: tab),
+        EditorLeftTab.text => const TextPanel(),
       },
     );
   }
@@ -269,28 +273,3 @@ class _MediaGridArea extends ConsumerWidget {
   }
 }
 
-// ── placeholder for the not-yet-built tabs ──────────────────────────────────
-
-class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.tab});
-  final EditorLeftTab tab;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(tab.icon, size: 36, color: Colors.white.withValues(alpha: 0.3)),
-          const SizedBox(height: 12),
-          Text(tab.label,
-              style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          Text('Coming soon',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.4))),
-        ],
-      ),
-    );
-  }
-}

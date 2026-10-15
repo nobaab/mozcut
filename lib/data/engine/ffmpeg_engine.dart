@@ -6,6 +6,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../domain/models/caption.dart';
 import '../../domain/models/clip.dart';
 import '../../domain/models/export_settings.dart';
+import '../../domain/models/text_overlay.dart';
 import 'engine.dart';
 
 part 'ffmpeg_engine.g.dart';
@@ -76,6 +77,7 @@ class FfmpegEngine implements Engine {
     required List<Clip> clips,
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
     void Function(double progress)? onProgress,
   }) async {
     if (clips.isEmpty) {
@@ -97,6 +99,13 @@ class FfmpegEngine implements Engine {
       await srtFile.writeAsString(_buildSrt(clips));
     }
 
+    // Each overlay's text is written to its own temp file and referenced via
+    // drawtext's `textfile=` option, rather than embedding it inline as
+    // `text=...`. This sidesteps ffmpeg's filtergraph escaping entirely for
+    // arbitrary user text (colons, apostrophes, percent signs, …) — the only
+    // thing that still needs escaping is the plain file path, exactly like
+    // the subtitles file above.
+    final overlayFiles = <File>[];
     try {
       // One ffmpeg call: each clip is an input trimmed with -ss/-to, then the
       // concat filter joins them. Re-encoding (not stream copy) so clips with
@@ -164,6 +173,27 @@ class FfmpegEngine implements Engine {
         nextLabelIndex++;
       }
 
+      // Burn in text/title overlays, one `drawtext` filter per overlay,
+      // chained in order. Each is timed with `enable='between(t,start,end)'`
+      // against `t`, which on this output label is already the final,
+      // concatenated timeline — exactly what TextOverlay.start/end are
+      // defined against. Fully additive: no overlays, no filter stage, and
+      // the export is byte-for-byte what it was before this feature.
+      if (textOverlays.isNotEmpty) {
+        final fontFile = _resolveFont();
+        for (var i = 0; i < textOverlays.length; i++) {
+          final textFile = File(
+              '${Directory.systemTemp.path}/vidkaat_text_${DateTime.now().millisecondsSinceEpoch}_$i.txt');
+          await textFile.writeAsString(textOverlays[i].text);
+          overlayFiles.add(textFile);
+
+          final nextLabel = '[vt$i]';
+          filter.write(
+              ';$videoLabel${_drawtextFilter(textOverlays[i], textFile, fontFile)}$nextLabel');
+          videoLabel = nextLabel;
+        }
+      }
+
       args.addAll([
         '-filter_complex', filter.toString(),
         '-map', videoLabel,
@@ -207,6 +237,15 @@ class FfmpegEngine implements Engine {
           await srtFile.delete();
         } catch (_) {
           // Best-effort cleanup only.
+        }
+      }
+      for (final file in overlayFiles) {
+        if (file.existsSync()) {
+          try {
+            await file.delete();
+          } catch (_) {
+            // Best-effort cleanup only.
+          }
         }
       }
     }
@@ -343,6 +382,75 @@ class FfmpegEngine implements Engine {
           'afade=t=out:st=${start.toStringAsFixed(3)}:d=${clip.fadeOut.toStringAsFixed(3)}');
     }
     return parts.isEmpty ? null : parts.join(',');
+  }
+
+  /// Builds one `drawtext=...` filter clause (no surrounding `[in][out]`
+  /// labels — the caller attaches those) for a single overlay.
+  ///
+  /// The overlay's text is read from [textFile] via drawtext's `textfile=`
+  /// option rather than embedded inline — see the comment above the call
+  /// site in [export] for why.
+  ///
+  /// Position: [TextOverlay.x]/[y] are fractions of the output frame, and the
+  /// overlay's `alignment` only shifts where the text box sits relative to
+  /// that anchor (left/center/right) — same idea as text-align in CSS.
+  /// `fontsize` is left as an ffmpeg expression (`h*fraction`) rather than a
+  /// literal number, so it is correct for whatever resolution this project
+  /// exports at without Dart needing to know the output size.
+  static String _drawtextFilter(
+      TextOverlay overlay, File textFile, String? fontFile) {
+    final xExpr = switch (overlay.alignment) {
+      TextOverlayAlignment.left => '(w*${overlay.x})',
+      TextOverlayAlignment.center => '(w*${overlay.x})-text_w/2',
+      TextOverlayAlignment.right => '(w*${overlay.x})-text_w',
+    };
+    final parts = <String>[
+      'drawtext=textfile=${_escapeFilterPath(textFile.path)}',
+      if (fontFile != null) 'fontfile=${_escapeFilterPath(fontFile)}',
+      'fontsize=h*${overlay.fontSize}',
+      'fontcolor=${_ffColor(overlay.color)}',
+      'x=$xExpr',
+      'y=(h*${overlay.y})-text_h/2',
+      // `expansion=none` stops drawtext from treating a lone '%' in the text
+      // as the start of a `%{...}` template sequence — without it, titles
+      // containing a literal '%' silently fail to render at all.
+      'expansion=none',
+      "enable='between(t,${overlay.start.toStringAsFixed(3)},${overlay.end.toStringAsFixed(3)})'",
+    ];
+    return parts.join(':');
+  }
+
+  /// Resolves a usable TrueType font for `drawtext`, trying common system
+  /// locations across macOS/Windows/Linux. Returns null if none is found —
+  /// the caller then omits `fontfile` entirely and lets ffmpeg fall back to
+  /// its own default (via fontconfig, where available) rather than crashing.
+  static String? _resolveFont() {
+    const candidates = [
+      // macOS
+      '/System/Library/Fonts/Supplemental/Arial.ttf',
+      '/System/Library/Fonts/Helvetica.ttc',
+      // Linux (common distro paths)
+      '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+      '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+      '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+      // Windows
+      'C:/Windows/Fonts/arial.ttf',
+      'C:/Windows/Fonts/Arial.ttf',
+    ];
+    for (final path in candidates) {
+      if (File(path).existsSync()) return path;
+    }
+    return null;
+  }
+
+  /// Converts a `#RRGGBB` (or `RRGGBB`) hex colour to the `0xRRGGBB` form
+  /// ffmpeg's colour parser accepts. Anything that doesn't look like a hex
+  /// triplet is passed through as-is (ffmpeg also accepts named colours like
+  /// `white`).
+  static String _ffColor(String color) {
+    final hex = color.startsWith('#') ? color.substring(1) : color;
+    final isHex = RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(hex);
+    return isHex ? '0x$hex' : color;
   }
 
   @override

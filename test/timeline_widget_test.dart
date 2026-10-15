@@ -5,6 +5,7 @@ import 'package:vidkaat/data/engine/engine.dart';
 import 'package:vidkaat/data/engine/ffmpeg_engine.dart';
 import 'package:vidkaat/domain/models/clip.dart';
 import 'package:vidkaat/domain/models/export_settings.dart';
+import 'package:vidkaat/domain/models/text_overlay.dart';
 import 'package:vidkaat/ui/features/editor/view_models/editor_view_model.dart';
 import 'package:vidkaat/ui/features/editor/views/timeline_panel.dart';
 
@@ -18,6 +19,7 @@ class FakeEngine implements Engine {
     required List<Clip> clips,
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
     void Function(double)? onProgress,
   }) async {}
 

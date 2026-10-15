@@ -9,6 +9,7 @@ import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
 import 'editor_shortcuts.dart';
 import 'export_dialog.dart';
+import '../view_models/text_overlays_view_model.dart';
 
 /// The top bar, modelled on CapCut: project name in the middle, and the row of
 /// actions on the right (Shortcuts, Pro, Share, Export). Back to the launcher is
@@ -104,6 +105,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
         '.${settings.fileExtension}';
     final engine = ref.read(engineProvider);
     final clips = ref.read(editorProvider).clips;
+    final textOverlays = ref.read(textOverlaysProvider);
     final progress = ref.read(exportProgressProvider.notifier);
     progress.set(0);
     try {
@@ -111,6 +113,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
           clips: clips,
           outputPath: path,
           settings: settings,
+          textOverlays: textOverlays,
           onProgress: progress.set);
       if (context.mounted) _snack(context, 'Exported to $path');
     } catch (e) {

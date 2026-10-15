@@ -7,6 +7,7 @@ import 'package:vidkaat/data/engine/engine.dart';
 import 'package:vidkaat/domain/models/clip.dart';
 import 'package:vidkaat/domain/models/export_settings.dart';
 import 'package:vidkaat/domain/models/project.dart';
+import 'package:vidkaat/domain/models/text_overlay.dart';
 import 'package:vidkaat/data/project/project_store.dart';
 
 /// Points path_provider at a temp dir so the recents file lands somewhere real.
@@ -27,6 +28,7 @@ class _NoEngine implements Engine {
     required List<Clip> clips,
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
     void Function(double)? onProgress,
   }) async {}
   @override

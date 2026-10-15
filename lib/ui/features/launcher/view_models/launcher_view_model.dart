@@ -3,6 +3,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../../data/project/project_store.dart';
 import '../../../../domain/models/project.dart';
 import '../../editor/view_models/editor_view_model.dart';
+import '../../editor/view_models/text_overlays_view_model.dart';
 
 part 'launcher_view_model.g.dart';
 
@@ -44,6 +45,7 @@ class App extends _$App {
     final project = state;
     if (project == null) return;
     project.clips = ref.read(editorProvider).clips;
+    project.textOverlays = ref.read(textOverlaysProvider);
     await _store.save(project);
   }
 
@@ -54,6 +56,7 @@ class App extends _$App {
 
   void _enter(Project project) {
     ref.read(editorProvider.notifier).loadClips(project.clips);
+    ref.read(textOverlaysProvider.notifier).load(project.textOverlays);
     state = project;
   }
 }
