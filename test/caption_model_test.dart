@@ -109,4 +109,72 @@ void main() {
     expect(edited.fadeIn, 1);
     expect(edited.fadeOut, 2);
   });
+
+  test('Clip defaults brightness/contrast/saturation/filterId to neutral', () {
+    final clip = Clip(sourcePath: '/v/a.mp4', sourceDuration: 10);
+    expect(clip.brightness, 0.0);
+    expect(clip.contrast, 1.0);
+    expect(clip.saturation, 1.0);
+    expect(clip.filterId, isNull);
+  });
+
+  test('Clip color/filter fields survive a JSON round-trip', () {
+    final clip = Clip(
+      sourcePath: '/v/a.mp4',
+      sourceDuration: 10,
+      brightness: 0.2,
+      contrast: 1.3,
+      saturation: 0.7,
+      filterId: 'Noir',
+    );
+
+    final restored = Clip.fromJson(clip.toJson());
+
+    expect(restored.brightness, 0.2);
+    expect(restored.contrast, 1.3);
+    expect(restored.saturation, 0.7);
+    expect(restored.filterId, 'Noir');
+  });
+
+  test('Clip defaults color/filter fields when absent from JSON '
+      '(old manifests)', () {
+    final clip = Clip.fromJson({
+      'id': 'x',
+      'sourcePath': '/v/a.mp4',
+      'sourceDuration': 10.0,
+    });
+    expect(clip.brightness, 0.0);
+    expect(clip.contrast, 1.0);
+    expect(clip.saturation, 1.0);
+    expect(clip.filterId, isNull);
+  });
+
+  test('Clip.copyWith only overrides the given color fields', () {
+    final clip = Clip(
+      sourcePath: '/v/a.mp4',
+      sourceDuration: 10,
+      brightness: 0.1,
+      contrast: 1.1,
+      saturation: 1.1,
+      filterId: 'Vivid',
+    );
+    final edited = clip.copyWith(brightness: 0.5);
+
+    expect(edited.brightness, 0.5);
+    expect(edited.contrast, 1.1);
+    expect(edited.saturation, 1.1);
+    expect(edited.filterId, 'Vivid');
+  });
+
+  test('Clip.copyWith(clearFilterId: true) clears filterId regardless of '
+      'other args', () {
+    final clip = Clip(
+      sourcePath: '/v/a.mp4',
+      sourceDuration: 10,
+      filterId: 'Vivid',
+    );
+    final edited = clip.copyWith(clearFilterId: true);
+
+    expect(edited.filterId, isNull);
+  });
 }

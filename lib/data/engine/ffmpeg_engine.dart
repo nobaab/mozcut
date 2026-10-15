@@ -5,6 +5,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../domain/models/caption.dart';
 import '../../domain/models/clip.dart';
+import '../../domain/models/color_filter_presets.dart';
 import '../../domain/models/export_settings.dart';
 import '../../domain/models/text_overlay.dart';
 import 'engine.dart';
@@ -344,6 +345,23 @@ class FfmpegEngine implements Engine {
       // the bare `rotw`/`roth` constants only exist inside them); the
       // corners this exposes are filled black, matching the background.
       steps.add('rotate=$radians:ow=rotw($radians):oh=roth($radians):c=black');
+    }
+    // ── color / filter ──
+    // Preset look first (the "base grade"), then the user's manual
+    // brightness/contrast/saturation tweaks on top — see
+    // domain/models/color_filter_presets.dart for the preset -> ffmpeg
+    // mapping. Both are no-ops by default, so a default clip produces
+    // exactly the filter chain it did before this feature existed.
+    final preset = clip.filterId == null
+        ? null
+        : kColorFilterPresets[clip.filterId];
+    if (preset != null) steps.add(preset.ffmpegFilterChain);
+    if (clip.brightness != 0.0 ||
+        clip.contrast != 1.0 ||
+        clip.saturation != 1.0) {
+      steps.add('eq=brightness=${_fmtFilterNum(clip.brightness)}:'
+          'contrast=${_fmtFilterNum(clip.contrast)}:'
+          'saturation=${_fmtFilterNum(clip.saturation)}');
     }
     filter.write('[$i:v:0]${steps.join(',')}[$fg];');
 

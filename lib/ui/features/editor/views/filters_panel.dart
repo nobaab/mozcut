@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+// Aliased: this file also uses Flutter's own `Clip` enum (clipBehavior), so
+// the domain model needs a distinct name to avoid colliding with it.
+import '../../../../domain/models/clip.dart' as domain show Clip;
 import '../../../core/app_colors.dart';
 import '../../../core/app_spacing.dart';
 import '../../../core/widgets/chips.dart';
 import '../../../core/widgets/fields.dart';
+import '../view_models/editor_ui_state.dart';
+import '../view_models/editor_view_model.dart';
 
 /// One entry in the filter catalogue: a named preset grouped under a category,
 /// mirroring Concat's 57 built-in filters (see docs/FEATURES.md Appendix).
@@ -108,18 +114,26 @@ const _kFilters = <FilterPreset>[
   FilterPreset('Adjust', 'Adjust'),
 ];
 
+/// The full catalogue, exposed read-only for tests that check every entry
+/// (other than 'Adjust') has a matching `kColorFilterPresets` transform —
+/// see test/color_filter_presets_test.dart.
+List<FilterPreset> get kFilterCatalogue => List.unmodifiable(_kFilters);
+
 /// The Filters tab: search + category chips over a grid of filter preset
-/// cards, sourced from Concat's 57-filter catalogue. Purely a browsing
-/// catalogue for now — applying a filter is not yet wired to the clip model
-/// or render engine.
-class FiltersPanel extends StatefulWidget {
+/// cards, sourced from Concat's 57-filter catalogue. Tapping a card applies
+/// (or, tapping the already-applied one again, clears) that preset on the
+/// selected clip's [Clip.filterId] — see `color_filter_presets.dart` for the
+/// name -> ffmpeg mapping actually used on export. The lone 'Adjust' card
+/// instead jumps to the inspector's Adjustment tab, since that's where manual
+/// brightness/contrast/saturation live.
+class FiltersPanel extends ConsumerStatefulWidget {
   const FiltersPanel({super.key});
 
   @override
-  State<FiltersPanel> createState() => _FiltersPanelState();
+  ConsumerState<FiltersPanel> createState() => _FiltersPanelState();
 }
 
-class _FiltersPanelState extends State<FiltersPanel> {
+class _FiltersPanelState extends ConsumerState<FiltersPanel> {
   final _searchController = TextEditingController();
   String _search = '';
   String _category = 'All';
@@ -128,6 +142,22 @@ class _FiltersPanelState extends State<FiltersPanel> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _applyFilter(domain.Clip? clip, FilterPreset filter) {
+    if (filter.name == 'Adjust') {
+      ref.read(rightTabProvider.notifier).set(EditorRightTab.adjustment);
+      return;
+    }
+    if (clip == null) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+            const SnackBar(content: Text('Select a clip first')));
+      return;
+    }
+    final editor = ref.read(editorProvider.notifier);
+    editor.setSelectedFilter(clip.filterId == filter.name ? null : filter.name);
   }
 
   List<FilterPreset> get _matches {
@@ -141,6 +171,7 @@ class _FiltersPanelState extends State<FiltersPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected));
     final matches = _matches;
     final sections = <String, List<FilterPreset>>{};
     for (final cat in _kFilterCategories) {
@@ -160,6 +191,25 @@ class _FiltersPanelState extends State<FiltersPanel> {
             onChanged: (v) => setState(() => _search = v),
           ),
         ),
+        if (clip?.filterId != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('Filter: ${clip!.filterId}',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.7))),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      ref.read(editorProvider.notifier).setSelectedFilter(null),
+                  child: const Text('None'),
+                ),
+              ],
+            ),
+          ),
         SizedBox(
           height: AppSpacing.controlHeight,
           child: ListView.separated(
@@ -203,7 +253,11 @@ class _FiltersPanelState extends State<FiltersPanel> {
                           ),
                         ),
                       ),
-                      _FilterGrid(filters: entry.value),
+                      _FilterGrid(
+                        filters: entry.value,
+                        selectedName: clip?.filterId,
+                        onTap: (filter) => _applyFilter(clip, filter),
+                      ),
                       const SizedBox(height: 14),
                     ],
                   ],
@@ -215,9 +269,15 @@ class _FiltersPanelState extends State<FiltersPanel> {
 }
 
 class _FilterGrid extends StatelessWidget {
-  const _FilterGrid({required this.filters});
+  const _FilterGrid({
+    required this.filters,
+    required this.selectedName,
+    required this.onTap,
+  });
 
   final List<FilterPreset> filters;
+  final String? selectedName;
+  final ValueChanged<FilterPreset> onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -234,7 +294,11 @@ class _FilterGrid extends StatelessWidget {
             childAspectRatio: 0.92,
           ),
           itemCount: filters.length,
-          itemBuilder: (context, i) => _FilterCard(filter: filters[i]),
+          itemBuilder: (context, i) => _FilterCard(
+            filter: filters[i],
+            selected: filters[i].name == selectedName,
+            onTap: () => onTap(filters[i]),
+          ),
         );
       },
     );
@@ -242,9 +306,15 @@ class _FilterGrid extends StatelessWidget {
 }
 
 class _FilterCard extends StatelessWidget {
-  const _FilterCard({required this.filter});
+  const _FilterCard({
+    required this.filter,
+    required this.selected,
+    required this.onTap,
+  });
 
   final FilterPreset filter;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -254,12 +324,13 @@ class _FilterCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text('${filter.name} — coming soon'))),
+        onTap: onTap,
         child: Container(
           decoration: BoxDecoration(
-            border: Border.all(color: AppColors.line),
+            border: Border.all(
+              color: selected ? AppColors.accent : AppColors.line,
+              width: selected ? 2 : 1,
+            ),
             borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
           ),
           child: Stack(
@@ -271,14 +342,18 @@ class _FilterCard extends StatelessWidget {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
-                      accent.withValues(alpha: 0.28),
+                      accent.withValues(alpha: selected ? 0.45 : 0.28),
                       AppColors.well,
                     ],
                   ),
                 ),
                 child: Center(
-                  child: Icon(Icons.filter_vintage_outlined,
-                      size: 22, color: accent.withValues(alpha: 0.85)),
+                  child: Icon(
+                      selected
+                          ? Icons.check_circle
+                          : Icons.filter_vintage_outlined,
+                      size: 22,
+                      color: selected ? AppColors.accent : accent.withValues(alpha: 0.85)),
                 ),
               ),
               Positioned(

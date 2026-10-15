@@ -206,4 +206,92 @@ void main() {
       expect(() => editor.updateSelectedAudio(volume: 1.5), returnsNormally);
     });
   });
+
+  group('updateSelectedColor', () {
+    test('sets brightness/contrast/saturation on the selected clip', () {
+      editor.updateSelectedColor(brightness: 0.3, contrast: 1.4, saturation: 0.6);
+      expect(clipAt(0).brightness, 0.3);
+      expect(clipAt(0).contrast, 1.4);
+      expect(clipAt(0).saturation, 0.6);
+    });
+
+    test('omitted parameters are left unchanged', () {
+      editor.updateSelectedColor(brightness: 0.2, contrast: 1.2, saturation: 1.2);
+      editor.updateSelectedColor(brightness: 0.5);
+      expect(clipAt(0).brightness, 0.5);
+      expect(clipAt(0).contrast, 1.2);
+      expect(clipAt(0).saturation, 1.2);
+    });
+
+    test('clamps brightness to -1..1', () {
+      editor.updateSelectedColor(brightness: 5);
+      expect(clipAt(0).brightness, 1.0);
+      editor.updateSelectedColor(brightness: -5);
+      expect(clipAt(0).brightness, -1.0);
+    });
+
+    test('clamps contrast and saturation to 0..3', () {
+      editor.updateSelectedColor(contrast: 10, saturation: 10);
+      expect(clipAt(0).contrast, 3.0);
+      expect(clipAt(0).saturation, 3.0);
+      editor.updateSelectedColor(contrast: -10, saturation: -10);
+      expect(clipAt(0).contrast, 0.0);
+      expect(clipAt(0).saturation, 0.0);
+    });
+
+    test('does not affect other clips', () {
+      editor.updateSelectedColor(brightness: 0.4);
+      expect(clipAt(1).brightness, 0.0);
+      expect(clipAt(2).brightness, 0.0);
+    });
+
+    test('does nothing when no clip is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.updateSelectedColor(brightness: 0.5), returnsNormally);
+    });
+  });
+
+  group('resetColor', () {
+    test('resets brightness/contrast/saturation to neutral', () {
+      editor.updateSelectedColor(brightness: 0.4, contrast: 1.5, saturation: 0.3);
+      editor.resetColor();
+      expect(clipAt(0).brightness, 0.0);
+      expect(clipAt(0).contrast, 1.0);
+      expect(clipAt(0).saturation, 1.0);
+    });
+
+    test('leaves the applied filter preset untouched', () {
+      editor.setSelectedFilter('Noir');
+      editor.resetColor();
+      expect(clipAt(0).filterId, 'Noir');
+    });
+  });
+
+  group('setSelectedFilter', () {
+    test('sets the filter preset on the selected clip', () {
+      editor.setSelectedFilter('Noir');
+      expect(clipAt(0).filterId, 'Noir');
+    });
+
+    test('clears the filter preset when passed null', () {
+      editor.setSelectedFilter('Noir');
+      editor.setSelectedFilter(null);
+      expect(clipAt(0).filterId, isNull);
+    });
+
+    test('does not affect other clips', () {
+      editor.setSelectedFilter('Vivid');
+      expect(clipAt(1).filterId, isNull);
+      expect(clipAt(2).filterId, isNull);
+    });
+
+    test('does nothing when no clip is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.setSelectedFilter('Noir'), returnsNormally);
+    });
+  });
 }
