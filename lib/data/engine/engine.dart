@@ -15,18 +15,28 @@ abstract class Engine {
   /// Throws [EngineException] if the file cannot be read as media.
   Future<double> probeDuration(String path);
 
+  /// Reads a media file's pixel dimensions (width, height) from its first
+  /// video stream. Used by the Ratio control's "Original" option to match
+  /// the first clip's aspect. Throws [EngineException] if they cannot be
+  /// determined.
+  Future<(int width, int height)> probeDimensions(String path);
+
   /// Trims each clip to its in/out region, joins them in order, applies
   /// [settings] (resolution / frame-rate / codec / quality / format), burns in
   /// any [textOverlays] and [stickerOverlays] (both timed on the final
   /// timeline), and writes the result to [outputPath]. Reports 0..1 progress
-  /// via [onProgress]. Defaults reproduce the export pipeline's original,
-  /// fixed behaviour.
+  /// via [onProgress]. [canvasWidth]/[canvasHeight] set the working canvas
+  /// every clip's transform is composited against (the project's aspect
+  /// ratio) — defaults to 1920x1080, reproducing the export pipeline's
+  /// original, fixed behaviour.
   Future<void> export({
     required List<Clip> clips,
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
     void Function(double progress)? onProgress,
   });
 
@@ -35,13 +45,17 @@ abstract class Engine {
   /// order, captions, [textOverlays] and [stickerOverlays] burned in) but at
   /// low resolution and encoder effort, so it renders in a fraction of the
   /// time. Used to drive a WYSIWYG player preview instead of showing just one
-  /// clip's raw source. Returns the path to the rendered temp MP4. Reports
-  /// 0..1 progress via [onProgress]. Throws [EngineException] if [clips] is
-  /// empty or ffmpeg fails.
+  /// clip's raw source. [canvasWidth]/[canvasHeight] set the working canvas
+  /// (the project's aspect ratio), same meaning as in [export] and defaulting
+  /// the same way. Returns the path to the rendered temp MP4. Reports 0..1
+  /// progress via [onProgress]. Throws [EngineException] if [clips] is empty
+  /// or ffmpeg fails.
   Future<String> renderPreview({
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
     void Function(double progress)? onProgress,
   });
 

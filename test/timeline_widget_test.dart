@@ -16,12 +16,17 @@ class FakeEngine implements Engine {
   Future<double> probeDuration(String path) async => 12.0;
 
   @override
+  Future<(int, int)> probeDimensions(String path) async => (1920, 1080);
+
+  @override
   Future<void> export({
     required List<Clip> clips,
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
     void Function(double)? onProgress,
   }) async {}
 
@@ -30,6 +35,8 @@ class FakeEngine implements Engine {
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
     void Function(double)? onProgress,
   }) async => '';
 

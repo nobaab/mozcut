@@ -42,12 +42,13 @@ class FfmpegEngine implements Engine {
   String? _emojiFontCache;
   bool _emojiFontProbed = false;
 
-  // The engine interface doesn't (yet) carry the project's VideoSettings, so
-  // export assumes the standard 1920x1080 canvas every clip's transform is
-  // expressed against. When Engine.export grows a `VideoSettings` parameter,
-  // thread it through here instead of this constant.
-  static const _canvasWidth = 1920;
-  static const _canvasHeight = 1080;
+  // The internal filtergraph timebase every per-clip chain runs at (the
+  // `color=` background source's `r=`, and the `fps=` re-assertion before
+  // each `xfade`). Independent of the project's canvas *size* (threaded
+  // through via `canvasWidth`/`canvasHeight` params below) and of the
+  // export's own output frame rate (`ExportSettings.fps`, applied by ffmpeg
+  // at encode time) — this is purely an internal constant so every clip's
+  // chain shares one timebase before concat/xfade.
   static const _canvasFps = 30;
 
   // renderPreview's proxy render: small enough to render fast, big enough to
@@ -89,12 +90,35 @@ class FfmpegEngine implements Engine {
   }
 
   @override
+  Future<(int, int)> probeDimensions(String path) async {
+    final result = await Process.run(_ffprobe, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height',
+      '-of', 'csv=s=x:p=0',
+      path,
+    ]);
+    if (result.exitCode != 0) {
+      throw EngineException('ffprobe failed: ${result.stderr}');
+    }
+    final parts = result.stdout.toString().trim().split('x');
+    final width = parts.isNotEmpty ? int.tryParse(parts[0]) : null;
+    final height = parts.length > 1 ? int.tryParse(parts[1]) : null;
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      throw EngineException('Could not read dimensions from "$path"');
+    }
+    return (width, height);
+  }
+
+  @override
   Future<void> export({
     required List<Clip> clips,
     required String outputPath,
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
     void Function(double progress)? onProgress,
   }) async {
     if (clips.isEmpty) {
@@ -109,6 +133,8 @@ class FfmpegEngine implements Engine {
       textOverlays: textOverlays,
       stickerOverlays: stickerOverlays,
       scaleFilter: settings.scaleFilter,
+      canvasWidth: canvasWidth,
+      canvasHeight: canvasHeight,
     );
     try {
       // One ffmpeg call: each clip is an input trimmed with -ss/-to, then the
@@ -141,6 +167,8 @@ class FfmpegEngine implements Engine {
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
     void Function(double progress)? onProgress,
   }) async {
     if (clips.isEmpty) {
@@ -160,6 +188,8 @@ class FfmpegEngine implements Engine {
       textOverlays: textOverlays,
       stickerOverlays: stickerOverlays,
       scaleFilter: 'scale=$_previewWidth:-2',
+      canvasWidth: canvasWidth,
+      canvasHeight: canvasHeight,
     );
     try {
       final args = <String>[
@@ -207,6 +237,8 @@ class FfmpegEngine implements Engine {
     required List<TextOverlay> textOverlays,
     List<StickerOverlay> stickerOverlays = const [],
     String? scaleFilter,
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
   }) async {
     File? srtFile;
     final overlayFiles = <File>[];
@@ -239,7 +271,8 @@ class FfmpegEngine implements Engine {
       final audioLabels = <String>[];
       for (var i = 0; i < clips.length; i++) {
         final clip = clips[i];
-        var vlabel = _videoFilterChain(filter, i, clip); // label, no brackets
+        var vlabel = _videoFilterChain(
+            filter, i, clip, canvasWidth, canvasHeight); // label, no brackets
         var alabel = '$i:a:0';
         if (clip.speed != 1.0) {
           filter.write(
@@ -558,8 +591,11 @@ class FfmpegEngine implements Engine {
   }
 
   /// Writes clip [i]'s transform filter chain into [filter] and returns the
-  /// output pad label (without brackets) to feed into concat.
-  String _videoFilterChain(StringBuffer filter, int i, Clip clip) {
+  /// output pad label (without brackets) to feed into concat. [canvasWidth]/
+  /// [canvasHeight] are the project's output canvas (its aspect ratio) —
+  /// every clip is fit ("contain") into this size before composition.
+  String _videoFilterChain(StringBuffer filter, int i, Clip clip,
+      int canvasWidth, int canvasHeight) {
     final bg = 'bg$i';
     final fg = 'fg$i';
     final out = 'v$i';
@@ -568,7 +604,7 @@ class FfmpegEngine implements Engine {
     // filter — no extra `-i` needed. It's infinite; `overlay`'s shortest=1
     // below trims the result to the (finite) foreground's duration.
     filter.write(
-      'color=c=black:s=${_canvasWidth}x$_canvasHeight:r=$_canvasFps[$bg];',
+      'color=c=black:s=${canvasWidth}x$canvasHeight:r=$_canvasFps[$bg];',
     );
 
     // 2. Foreground: fit into the canvas ("contain", preserving aspect
@@ -576,7 +612,7 @@ class FfmpegEngine implements Engine {
     // so no probing of pixel dimensions is needed here), then the clip's
     // own `scale` on top of that fit, then flip/rotate.
     final steps = <String>[
-      'scale=w=$_canvasWidth:h=$_canvasHeight:force_original_aspect_ratio=decrease',
+      'scale=w=$canvasWidth:h=$canvasHeight:force_original_aspect_ratio=decrease',
       // trunc(.../2)*2 keeps dimensions even, which libx264 requires.
       "scale=w='trunc(iw*${clip.scale}/2)*2':h='trunc(ih*${clip.scale}/2)*2'",
     ];
@@ -623,8 +659,8 @@ class FfmpegEngine implements Engine {
     // by posX/posY (fractions of half the canvas size — see Clip's doc
     // comments). `overlay` clips anything outside the canvas automatically,
     // so a scale > 1 ("zoomed in") frame is cropped rather than erroring.
-    final offsetX = clip.posX * _canvasWidth / 2;
-    final offsetY = clip.posY * _canvasHeight / 2;
+    final offsetX = clip.posX * canvasWidth / 2;
+    final offsetY = clip.posY * canvasHeight / 2;
     filter.write(
       "[$bg][$fg]overlay=x='(W-w)/2+($offsetX)':y='(H-h)/2+($offsetY)':"
       "shortest=1,setsar=1,format=yuv420p[$out];",

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../data/engine/ffmpeg_engine.dart';
+import '../../../../domain/models/project.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
@@ -108,6 +109,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
     final clips = ref.read(editorProvider).clips;
     final textOverlays = ref.read(textOverlaysProvider);
     final stickerOverlays = ref.read(stickerOverlaysProvider);
+    final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
     final progress = ref.read(exportProgressProvider.notifier);
     progress.set(0);
     try {
@@ -117,6 +119,8 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
           settings: settings,
           textOverlays: textOverlays,
           stickerOverlays: stickerOverlays,
+          canvasWidth: canvas.width,
+          canvasHeight: canvas.height,
           onProgress: progress.set);
       if (context.mounted) _snack(context, 'Exported to $path');
     } catch (e) {

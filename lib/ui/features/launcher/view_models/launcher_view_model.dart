@@ -33,6 +33,28 @@ class App extends _$App {
     _enter(project);
   }
 
+  /// Changes the project's canvas (the Ratio control in the player) to
+  /// [width]x[height], keeping the current frame rate. Rebuilds a fresh
+  /// [Project] rather than mutating [Project.video] in place — reassigning
+  /// the very same instance to `state` wouldn't notify watchers, since
+  /// Riverpod skips the update when the new state is identical to the old
+  /// one. The new canvas is persisted the next time [saveCurrent] runs (e.g.
+  /// on [closeToStart]), same as clips/overlays.
+  void setCanvas(int width, int height) {
+    final project = state;
+    if (project == null) return;
+    state = Project(
+      folderPath: project.folderPath,
+      name: project.name,
+      video: VideoSettings(width: width, height: height, fps: project.video.fps),
+      clips: project.clips,
+      textOverlays: project.textOverlays,
+      stickerOverlays: project.stickerOverlays,
+      createdAt: project.createdAt,
+      modifiedAt: project.modifiedAt,
+    );
+  }
+
   /// Saves the current edit back to its manifest, then returns to the launcher
   /// and refreshes the recents grid.
   Future<void> closeToStart() async {
