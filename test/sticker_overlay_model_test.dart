@@ -38,6 +38,52 @@ void main() {
       expect(restored.size, 0.12);
       expect(restored.x, 0.5);
       expect(restored.y, 0.5);
+      expect(restored.imagePath, isNull);
+      expect(restored.rotation, 0);
+      expect(restored.isImage, isFalse);
+    });
+
+    test('an image sticker survives a JSON round-trip', () {
+      final sticker = StickerOverlay(
+        imagePath: '/tmp/circle.png',
+        start: 0.5,
+        end: 3.5,
+        size: 0.3,
+        x: 0.25,
+        y: 0.6,
+        rotation: 45,
+      );
+
+      expect(sticker.isImage, isTrue);
+
+      final restored = StickerOverlay.fromJson(sticker.toJson());
+
+      expect(restored.id, sticker.id);
+      expect(restored.emoji, isNull);
+      expect(restored.imagePath, '/tmp/circle.png');
+      expect(restored.rotation, 45);
+      expect(restored.isImage, isTrue);
+      expect(restored, sticker);
+    });
+
+    test('copyWith can turn an emoji sticker into an image sticker', () {
+      final sticker = StickerOverlay(emoji: '🔥', start: 0, end: 2);
+      final edited = sticker.copyWith(imagePath: '/tmp/arrow.png');
+
+      expect(edited.id, sticker.id);
+      expect(edited.imagePath, '/tmp/arrow.png');
+      expect(edited.isImage, isTrue);
+      // copyWith only overrides given fields — the old emoji is untouched
+      // (harmless since [isImage] means it's ignored at burn-in time).
+      expect(edited.emoji, '🔥');
+    });
+
+    test('copyWith overrides rotation', () {
+      final sticker = StickerOverlay(emoji: '😀', start: 0, end: 2);
+      final edited = sticker.copyWith(rotation: 90);
+
+      expect(edited.rotation, 90);
+      expect(sticker.rotation, 0);
     });
 
     test('copyWith only overrides given fields and keeps the id', () {
@@ -79,6 +125,19 @@ void main() {
       expect(state.length, 1);
       expect(state.first, added);
       expect(added.emoji, '🔥');
+    });
+
+    test('addImage appends a default image sticker and returns it', () {
+      final added = notifier.addImage('/tmp/circle.png', start: 2, end: 5);
+      final state = container.read(stickerOverlaysProvider);
+
+      expect(state.length, 1);
+      expect(state.first, added);
+      expect(added.imagePath, '/tmp/circle.png');
+      expect(added.isImage, isTrue);
+      expect(added.start, 2);
+      expect(added.end, 5);
+      expect(added.emoji, isNull);
     });
 
     test('update replaces the sticker at the given index', () {

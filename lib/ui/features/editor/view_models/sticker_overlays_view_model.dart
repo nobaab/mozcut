@@ -19,9 +19,32 @@ class StickerOverlays extends _$StickerOverlays {
   /// Replaces the whole list (used when opening a project).
   void load(List<StickerOverlay> overlays) => state = List.of(overlays);
 
-  /// Adds a new sticker with sensible defaults and returns it.
+  /// Adds a new emoji sticker with sensible defaults and returns it.
   StickerOverlay add(String emoji) {
     final overlay = StickerOverlay(emoji: emoji, start: 0, end: 3);
+    state = [...state, overlay];
+    return overlay;
+  }
+
+  /// Adds a new image sticker (a user-imported file or a generated shape) at
+  /// [start]..[end] (defaulting to a 3-second window, same as [add]),
+  /// centered by default, and returns it.
+  StickerOverlay addImage(
+    String imagePath, {
+    double start = 0,
+    double end = 3,
+    double size = 0.3,
+    double x = 0.5,
+    double y = 0.5,
+  }) {
+    final overlay = StickerOverlay(
+      imagePath: imagePath,
+      start: start,
+      end: end,
+      size: size,
+      x: x,
+      y: y,
+    );
     state = [...state, overlay];
     return overlay;
   }

@@ -114,6 +114,17 @@ abstract class Engine {
   /// ffmpeg fails.
   Future<String> generateSfx(String id);
 
+  /// Renders (or returns the cached path of) a built-in sticker shape from
+  /// the Stickers panel's Shapes catalogue (see `kShapePresets`), identified
+  /// by [id] (e.g. `'circle'`, `'arrow'`). Since no artwork is bundled, the
+  /// first call for a given [id] synthesizes a transparent PNG with ffmpeg
+  /// (`drawbox`/`geq` on a zero-input `color` source, per that preset's
+  /// definition) and caches the result on disk; later calls with the same
+  /// [id] return instantly. The returned path is just an image, usable
+  /// anywhere an imported image sticker is (see [StickerOverlay.imagePath]).
+  /// Throws [EngineException] if [id] isn't in the catalogue or ffmpeg fails.
+  Future<String> generateShape(String id);
+
   /// Extracts [count] JPEG frame thumbnails evenly spaced across [clip]'s
   /// trimmed region (inPoint..outPoint), each scaled to [height] tall
   /// (width preserves source aspect). Returns their file paths in timeline
