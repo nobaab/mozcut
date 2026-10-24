@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/ui/features/editor/views/player/player_geometry.dart';
