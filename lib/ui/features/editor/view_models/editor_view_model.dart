@@ -3,6 +3,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../../data/engine/ffmpeg_engine.dart';
 import '../../../../domain/models/caption.dart';
 import '../../../../domain/models/clip.dart';
+import '../../../../domain/models/keyframe.dart';
 import '../../../../domain/models/media_type.dart';
 
 part 'editor_view_model.g.dart';
@@ -68,7 +69,11 @@ class Editor extends _$Editor {
         selectedId: s.selectedId,
       );
 
-  Clip _cloneClip(Clip c) => c.copyWith(captions: List.of(c.captions));
+  Clip _cloneClip(Clip c) => c.copyWith(
+        captions: List.of(c.captions),
+        keyframes: c.keyframes
+            .map((property, kfs) => MapEntry(property, List.of(kfs))),
+      );
 
   /// Routes a state change through undo history: snapshots the current state
   /// onto the undo stack (capped at [_historyLimit]), clears the redo stack,
@@ -274,24 +279,72 @@ class Editor extends _$Editor {
     });
   }
 
-  /// Updates the transform (scale / position / rotation / flip) of the
-  /// selected clip. Only the provided fields change; the rest are kept.
+  /// Updates the transform (scale / position / rotation / opacity / flip) of
+  /// the selected clip. Only the provided fields change; the rest are kept.
+  ///
+  /// If a given property already has keyframes, the new value is instead
+  /// inserted/updated as a keyframe at the current playhead (clip-relative —
+  /// see [addKeyframe]) rather than overwriting the static field, so an
+  /// animated property stays driven entirely by its keyframes. A property
+  /// with no keyframes behaves exactly as before this feature existed.
   void updateTransform({
     double? scale,
     double? posX,
     double? posY,
     double? rotation,
+    double? opacity,
     bool? flipH,
   }) {
-    _mapSelected((c) => c.copyWith(
-          // Guard against a zero/negative scale, which would collapse the
-          // ffmpeg filter chain to a zero-size frame.
-          scale: scale?.clamp(0.05, 8.0).toDouble(),
-          posX: posX?.clamp(-2.0, 2.0).toDouble(),
-          posY: posY?.clamp(-2.0, 2.0).toDouble(),
-          rotation: rotation,
-          flipH: flipH,
-        ));
+    _mapSelected((c) {
+      final clipT =
+          (ref.read(playheadProvider) - c.inPoint).clamp(0.0, c.duration);
+      var keyframes = c.keyframes;
+
+      // Writes [value] into [property]'s keyframe list at the current
+      // playhead and returns null (meaning "handled, leave the static field
+      // alone") if that property already has keyframes; otherwise returns
+      // [value] unchanged for the caller to apply to the static field.
+      double? apply(String property, double? value) {
+        if (value == null) return null;
+        final existing = c.keyframes[property];
+        if (existing == null || existing.isEmpty) return value;
+        final list = List<Keyframe>.of(existing);
+        final idx =
+            list.indexWhere((k) => (k.timeSec - clipT).abs() < 0.001);
+        final kf = Keyframe(timeSec: clipT, value: value);
+        if (idx >= 0) {
+          list[idx] = kf;
+        } else {
+          list.add(kf);
+        }
+        list.sort((a, b) => a.timeSec.compareTo(b.timeSec));
+        keyframes = Map<String, List<Keyframe>>.of(keyframes)
+          ..[property] = list;
+        return null;
+      }
+
+      // Guard against a zero/negative scale, which would collapse the
+      // ffmpeg filter chain to a zero-size frame.
+      final newScale =
+          apply(kKeyframeScale, scale?.clamp(0.05, 8.0).toDouble());
+      final newPosX =
+          apply(kKeyframePosX, posX?.clamp(-2.0, 2.0).toDouble());
+      final newPosY =
+          apply(kKeyframePosY, posY?.clamp(-2.0, 2.0).toDouble());
+      final newRotation = apply(kKeyframeRotation, rotation);
+      final newOpacity =
+          apply(kKeyframeOpacity, opacity?.clamp(0.0, 1.0).toDouble());
+
+      return c.copyWith(
+        scale: newScale,
+        posX: newPosX,
+        posY: newPosY,
+        rotation: newRotation,
+        opacity: newOpacity,
+        flipH: flipH,
+        keyframes: keyframes,
+      );
+    });
   }
 
   /// Resets the selected clip's transform back to identity.
@@ -303,6 +356,80 @@ class Editor extends _$Editor {
           rotation: 0.0,
           flipH: false,
         ));
+  }
+
+  // ── keyframes ──
+  // Per-property animation of the transform fields (see
+  // lib/domain/models/keyframe.dart and docs/CAPCUT-SPEC.md §2.6). [property]
+  // is one of the `kKeyframe*` constants in clip.dart; [timeSec] is
+  // clip-relative (0 = start of the trimmed region) — the inspector's diamond
+  // buttons are responsible for converting the playhead into that clip-local
+  // time before calling these.
+
+  /// Adds a keyframe for [property] at clip-relative [timeSec] with [value].
+  /// If a keyframe already sits within ~1ms of [timeSec] it is replaced
+  /// in place rather than duplicated (re-recording at the same instant just
+  /// updates the value). The list is kept sorted by time.
+  void addKeyframe(String property, double timeSec, double value) {
+    _mapSelected((c) {
+      final list = List<Keyframe>.of(c.keyframes[property] ?? const []);
+      final idx =
+          list.indexWhere((k) => (k.timeSec - timeSec).abs() < 0.001);
+      final kf = Keyframe(timeSec: timeSec, value: value);
+      if (idx >= 0) {
+        list[idx] = kf;
+      } else {
+        list.add(kf);
+      }
+      list.sort((a, b) => a.timeSec.compareTo(b.timeSec));
+      final keyframes = Map<String, List<Keyframe>>.of(c.keyframes)
+        ..[property] = list;
+      return c.copyWith(keyframes: keyframes);
+    });
+  }
+
+  /// Removes the keyframe within ~1ms of clip-relative [timeSec] from
+  /// [property]'s list, if any. Removing the last keyframe for a property
+  /// drops the map entry entirely, reverting it to static (using its current
+  /// field value) — same as [clearKeyframes].
+  void removeKeyframe(String property, double timeSec) {
+    _mapSelected((c) {
+      final list = c.keyframes[property];
+      if (list == null || list.isEmpty) return c;
+      final idx =
+          list.indexWhere((k) => (k.timeSec - timeSec).abs() < 0.001);
+      if (idx < 0) return c;
+      final updated = List<Keyframe>.of(list)..removeAt(idx);
+      final keyframes = Map<String, List<Keyframe>>.of(c.keyframes);
+      if (updated.isEmpty) {
+        keyframes.remove(property);
+      } else {
+        keyframes[property] = updated;
+      }
+      return c.copyWith(keyframes: keyframes);
+    });
+  }
+
+  /// Removes every keyframe for [property] on the selected clip, reverting
+  /// it to its static field value (the diamond's "clear" affordance).
+  void clearKeyframes(String property) {
+    _mapSelected((c) {
+      if (!c.keyframes.containsKey(property)) return c;
+      final keyframes = Map<String, List<Keyframe>>.of(c.keyframes)
+        ..remove(property);
+      return c.copyWith(keyframes: keyframes);
+    });
+  }
+
+  /// The inspector diamond button's click handler: records [property]'s
+  /// *current* value (interpolated if it's already animated, otherwise its
+  /// static field) as a keyframe at the current playhead. No-op if there is
+  /// no selected clip.
+  void addKeyframeAtPlayhead(String property) {
+    final c = state.selected;
+    if (c == null) return;
+    final t = (ref.read(playheadProvider) - c.inPoint).clamp(0.0, c.duration);
+    addKeyframe(property, t, c.valueAt(property, t));
   }
 
   // ── color / filter ──

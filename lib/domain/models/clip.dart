@@ -1,7 +1,18 @@
 import 'package:uuid/uuid.dart';
 
 import 'caption.dart';
+import 'keyframe.dart';
 import 'media_type.dart';
+
+/// Property names [Clip.keyframes] may be keyed by — one per animatable
+/// transform property (see docs/CAPCUT-SPEC.md §2.6). Kept as plain string
+/// constants (rather than an enum) because they're also used as JSON map
+/// keys and as the `property` argument threaded through the UI/Editor.
+const kKeyframeScale = 'scale';
+const kKeyframePosX = 'posX';
+const kKeyframePosY = 'posY';
+const kKeyframeRotation = 'rotation';
+const kKeyframeOpacity = 'opacity';
 
 const _uuid = Uuid();
 
@@ -32,6 +43,7 @@ class Clip {
     double? posX,
     double? posY,
     double? rotation,
+    double? opacity,
     bool? flipH,
     double? speed,
     double? volume,
@@ -46,6 +58,7 @@ class Clip {
     double? transitionDuration,
     this.originalSourcePath,
     MediaType? mediaType,
+    Map<String, List<Keyframe>>? keyframes,
   })  : id = id ?? _uuid.v4(),
         mediaType = mediaType ?? MediaType.video,
         inPoint = inPoint ?? 0,
@@ -55,6 +68,10 @@ class Clip {
         posX = posX ?? 0.0,
         posY = posY ?? 0.0,
         rotation = rotation ?? 0.0,
+        opacity = opacity ?? 1.0,
+        keyframes = keyframes == null
+            ? const <String, List<Keyframe>>{}
+            : Map.unmodifiable(keyframes),
         flipH = flipH ?? false,
         speed = speed ?? 1.0,
         volume = volume ?? 1.0,
@@ -98,8 +115,29 @@ class Clip {
   /// Rotation in degrees, clockwise.
   double rotation;
 
+  /// Overall opacity, 0 (fully transparent) .. 1 (fully opaque, the
+  /// default). Only meaningfully visible when something else shows through
+  /// (an overlay track, or this clip faded to the black canvas) — see
+  /// FfmpegEngine's `_videoFilterChain`.
+  double opacity;
+
   /// Mirrors the clip horizontally.
   bool flipH;
+
+  // ── keyframes ──
+  // Per-property animation of the transform fields above — see
+  // docs/CAPCUT-SPEC.md §2.6 and lib/domain/models/keyframe.dart. Keyed by
+  // one of the kKeyframe* constants above; an absent key (or an empty list)
+  // means that property is static, using its own field value as today.
+  // Deliberately **clip-relative** (0 = start of the trimmed region) rather
+  // than anchored to an absolute project timestamp, so a clip's animation
+  // survives being moved/reordered on the timeline.
+
+  /// Per-property keyframe lists. Empty (the default) for every clip created
+  /// before this feature existed, and for any clip with no animation —
+  /// `Clip.valueAt` falls back to the static field in that case, so export
+  /// produces the exact same filtergraph as before this feature existed.
+  Map<String, List<Keyframe>> keyframes;
 
   // ── Speed & audio ──
 
@@ -202,6 +240,28 @@ class Clip {
 
   String get fileName => sourcePath.split(RegExp(r'[/\\]')).last;
 
+  /// The static value of transform [property] (one of the `kKeyframe*`
+  /// constants) — what [valueAt] falls back to when the property has no
+  /// keyframes, and what the inspector's diamond button records when a
+  /// keyframe is added. Returns 0 for an unrecognized property.
+  double staticValue(String property) => switch (property) {
+        kKeyframeScale => scale,
+        kKeyframePosX => posX,
+        kKeyframePosY => posY,
+        kKeyframeRotation => rotation,
+        kKeyframeOpacity => opacity,
+        _ => 0.0,
+      };
+
+  /// The effective value of transform [property] at clip-relative time
+  /// [t] (seconds from the start of the trimmed region): interpolated
+  /// between its keyframes if it has any, otherwise [staticValue].
+  double valueAt(String property, double t) => keyframeValueAt(
+        keyframes[property] ?? const [],
+        t,
+        fallback: staticValue(property),
+      );
+
   Clip copyWith({
     String? sourcePath,
     double? sourceDuration,
@@ -212,6 +272,7 @@ class Clip {
     double? posX,
     double? posY,
     double? rotation,
+    double? opacity,
     bool? flipH,
     double? speed,
     double? volume,
@@ -230,6 +291,7 @@ class Clip {
     String? originalSourcePath,
     bool clearOriginalSourcePath = false,
     MediaType? mediaType,
+    Map<String, List<Keyframe>>? keyframes,
   }) =>
       Clip(
         id: id,
@@ -242,6 +304,7 @@ class Clip {
         posX: posX ?? this.posX,
         posY: posY ?? this.posY,
         rotation: rotation ?? this.rotation,
+        opacity: opacity ?? this.opacity,
         flipH: flipH ?? this.flipH,
         speed: speed ?? this.speed,
         volume: volume ?? this.volume,
@@ -260,6 +323,7 @@ class Clip {
             ? null
             : (originalSourcePath ?? this.originalSourcePath),
         mediaType: mediaType ?? this.mediaType,
+        keyframes: keyframes ?? this.keyframes,
       );
 
   Map<String, dynamic> toJson() => {
@@ -273,6 +337,7 @@ class Clip {
         'posX': posX,
         'posY': posY,
         'rotation': rotation,
+        'opacity': opacity,
         'flipH': flipH,
         'speed': speed,
         'volume': volume,
@@ -287,6 +352,14 @@ class Clip {
         'transitionDuration': transitionDuration,
         'originalSourcePath': originalSourcePath,
         'mediaType': mediaType.toJson(),
+        // Only written when at least one property is actually animated, so
+        // an unanimated clip's JSON is byte-for-byte what it was before this
+        // feature existed.
+        if (keyframes.isNotEmpty)
+          'keyframes': keyframes.map(
+            (property, kfs) =>
+                MapEntry(property, kfs.map((k) => k.toJson()).toList()),
+          ),
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -304,6 +377,7 @@ class Clip {
         posX: (json['posX'] as num?)?.toDouble(),
         posY: (json['posY'] as num?)?.toDouble(),
         rotation: (json['rotation'] as num?)?.toDouble(),
+        opacity: (json['opacity'] as num?)?.toDouble(),
         flipH: json['flipH'] as bool?,
         speed: (json['speed'] as num?)?.toDouble(),
         volume: (json['volume'] as num?)?.toDouble(),
@@ -318,5 +392,13 @@ class Clip {
         transitionDuration: (json['transitionDuration'] as num?)?.toDouble(),
         originalSourcePath: json['originalSourcePath'] as String?,
         mediaType: MediaType.fromJson(json['mediaType'] as String?),
+        keyframes: (json['keyframes'] as Map?)?.map(
+          (property, kfs) => MapEntry(
+            property as String,
+            (kfs as List)
+                .map((k) => Keyframe.fromJson(k as Map<String, dynamic>))
+                .toList(),
+          ),
+        ),
       );
 }
