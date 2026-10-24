@@ -1,28 +1,89 @@
 import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../domain/models/audio_clip.dart';
 import '../../../../domain/models/clip.dart' as model;
+import '../../../../domain/models/media_type.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/split_handle.dart';
+import '../view_models/audio_clips_view_model.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
+import '../view_models/media_import.dart';
 import '../view_models/thumbnails_view_model.dart';
 
 /// The timeline: a fixed track-header gutter on the left, then a horizontally
-/// scrolling ruler + track lane. Clips sit end to end on one video track, sized
-/// by the zoom. A playhead line tracks the preview. Modelled on CapCut.
-class TimelinePanel extends ConsumerWidget {
+/// scrolling ruler + video track + audio lane. Clips sit end to end on one
+/// video track, sized by the zoom; audio clips float freely on the lane below,
+/// positioned by their own `start`. A playhead line tracks the preview.
+/// Modelled on CapCut. Also accepts drag-and-drop of media files, routed the
+/// same way as the media browser's Import button (see `importMediaPaths`).
+class TimelinePanel extends ConsumerStatefulWidget {
   const TimelinePanel({super.key});
 
   static const _headerWidth = 150.0;
   static const _rulerHeight = 24.0;
+  static const _videoLaneHeight = 64.0;
+  static const _laneGap = 6.0;
+  static const _audioLaneHeight = 48.0;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TimelinePanel> createState() => _TimelinePanelState();
+}
+
+class _TimelinePanelState extends ConsumerState<TimelinePanel> {
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _dragging = true),
+      onDragExited: (_) => setState(() => _dragging = false),
+      onDragDone: (details) async {
+        setState(() => _dragging = false);
+        await importMediaPaths(
+          ref,
+          details.files.map((f) => f.path),
+          onError: (message) {
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(message)));
+          },
+        );
+      },
+      child: Stack(
+        children: [
+          _buildTimeline(context, ref),
+          if (_dragging)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.12),
+                    border: Border.all(color: AppColors.accent, width: 2),
+                  ),
+                  child: const Center(
+                    child: Text('Drop to import',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 14)),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeline(BuildContext context, WidgetRef ref) {
     final state = ref.watch(editorProvider);
     final px = ref.watch(timelineZoomProvider);
+    final audioClips = ref.watch(audioClipsProvider);
+    final selectedAudioId = ref.watch(selectedAudioClipProvider);
 
     final total = state.totalDuration;
     // Cumulative start offset of each clip on the timeline.
@@ -32,6 +93,15 @@ class TimelinePanel extends ConsumerWidget {
       starts.add(acc);
       acc += c.duration;
     }
+
+    // The audio lane's clips are positioned independently of the video
+    // track, so the content area needs to be wide enough for whichever of
+    // the two extends further right.
+    var audioEnd = 0.0;
+    for (final a in audioClips) {
+      audioEnd = math.max(audioEnd, a.start + a.duration);
+    }
+    final timelineSeconds = math.max(total, audioEnd);
 
     // Playhead in timeline seconds, derived from the preview position within
     // the selected clip.
@@ -49,18 +119,20 @@ class TimelinePanel extends ConsumerWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(width: _headerWidth, child: _trackHeader()),
+          SizedBox(
+              width: TimelinePanel._headerWidth, child: _trackHeader()),
           const VerticalDivider(width: 1, thickness: 1, color: AppColors.line),
           Expanded(
-            child: state.clips.isEmpty
+            child: state.clips.isEmpty && audioClips.isEmpty
                 ? Center(
-                    child: Text('Imported clips show up here',
+                    child: Text(
+                        'Imported clips show up here — drop media to add it',
                         style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.25))),
                   )
                 : LayoutBuilder(builder: (context, c) {
-                    final contentW =
-                        (total * px + 80).clamp(c.maxWidth, double.infinity);
+                    final contentW = (timelineSeconds * px + 80)
+                        .clamp(c.maxWidth, double.infinity);
                     void scrub(double localDx) => _scrubToTimelineSeconds(
                         ref, state, starts, localDx / px);
                     return SingleChildScrollView(
@@ -76,87 +148,151 @@ class TimelinePanel extends ConsumerWidget {
                               onTapDown: (d) => scrub(d.localPosition.dx),
                               onHorizontalDragUpdate: (d) =>
                                   scrub(d.localPosition.dx),
-                              child: _Ruler(seconds: total, px: px),
+                              child:
+                                  _Ruler(seconds: timelineSeconds, px: px),
                             ),
                             Expanded(
                               child: Stack(
                                 children: [
-                                  // The one video track lane.
                                   Padding(
                                     padding: const EdgeInsets.only(top: 8),
-                                    child: SizedBox(
-                                      height: 64,
-                                      width: contentW.toDouble(),
-                                      child: Stack(
-                                        children: [
-                                          // Empty track space: click to scrub
-                                          // (clips above handle their own
-                                          // taps/drags and take priority).
-                                          Positioned.fill(
-                                            child: GestureDetector(
-                                              behavior: HitTestBehavior.opaque,
-                                              onTapDown: (d) =>
-                                                  scrub(d.localPosition.dx),
-                                            ),
-                                          ),
-                                          for (var i = 0;
-                                              i < state.clips.length;
-                                              i++)
-                                            Positioned(
-                                              key: ValueKey(
-                                                  state.clips[i].id),
-                                              left: starts[i] * px,
-                                              width: state.clips[i].duration *
-                                                  px,
-                                              top: 0,
-                                              bottom: 0,
-                                              child: _ClipSlot(
-                                                clip: state.clips[i],
-                                                index: i,
-                                                clips: state.clips,
-                                                starts: starts,
-                                                px: px,
-                                                selected: state.clips[i].id ==
-                                                    state.selectedId,
-                                                onTap: () => ref
-                                                    .read(editorProvider
-                                                        .notifier)
-                                                    .select(
-                                                        state.clips[i].id),
-                                                onReorder: (newIndex) => ref
-                                                    .read(editorProvider
-                                                        .notifier)
-                                                    .reorder(i, newIndex),
-                                                onTrimLeftDx: (dx) {
-                                                  final c = ref
-                                                      .read(editorProvider)
-                                                      .clips[i];
-                                                  ref
-                                                      .read(editorProvider
-                                                          .notifier)
-                                                      .setTrim(c.id,
-                                                          inPoint: c.inPoint +
-                                                              dx / px);
-                                                },
-                                                onTrimRightDx: (dx) {
-                                                  final c = ref
-                                                      .read(editorProvider)
-                                                      .clips[i];
-                                                  ref
-                                                      .read(editorProvider
-                                                          .notifier)
-                                                      .setTrim(c.id,
-                                                          outPoint: c
-                                                                  .outPoint +
-                                                              dx / px);
-                                                },
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        // The one video track lane.
+                                        SizedBox(
+                                          height:
+                                              TimelinePanel._videoLaneHeight,
+                                          width: contentW.toDouble(),
+                                          child: Stack(
+                                            children: [
+                                              // Empty track space: click to
+                                              // scrub (clips above handle
+                                              // their own taps/drags and take
+                                              // priority).
+                                              Positioned.fill(
+                                                child: GestureDetector(
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onTapDown: (d) =>
+                                                      scrub(d.localPosition.dx),
+                                                ),
                                               ),
-                                            ),
-                                        ],
-                                      ),
+                                              for (var i = 0;
+                                                  i < state.clips.length;
+                                                  i++)
+                                                Positioned(
+                                                  key: ValueKey(
+                                                      state.clips[i].id),
+                                                  left: starts[i] * px,
+                                                  width:
+                                                      state.clips[i].duration *
+                                                          px,
+                                                  top: 0,
+                                                  bottom: 0,
+                                                  child: _ClipSlot(
+                                                    clip: state.clips[i],
+                                                    index: i,
+                                                    clips: state.clips,
+                                                    starts: starts,
+                                                    px: px,
+                                                    selected: state.clips[i]
+                                                            .id ==
+                                                        state.selectedId,
+                                                    onTap: () => ref
+                                                        .read(editorProvider
+                                                            .notifier)
+                                                        .select(
+                                                            state.clips[i].id),
+                                                    onReorder: (newIndex) =>
+                                                        ref
+                                                            .read(
+                                                                editorProvider
+                                                                    .notifier)
+                                                            .reorder(
+                                                                i, newIndex),
+                                                    onTrimLeftDx: (dx) {
+                                                      final c = ref
+                                                          .read(editorProvider)
+                                                          .clips[i];
+                                                      ref
+                                                          .read(editorProvider
+                                                              .notifier)
+                                                          .setTrim(c.id,
+                                                              inPoint: c
+                                                                      .inPoint +
+                                                                  dx / px);
+                                                    },
+                                                    onTrimRightDx: (dx) {
+                                                      final c = ref
+                                                          .read(editorProvider)
+                                                          .clips[i];
+                                                      ref
+                                                          .read(editorProvider
+                                                              .notifier)
+                                                          .setTrim(c.id,
+                                                              outPoint: c
+                                                                      .outPoint +
+                                                                  dx / px);
+                                                    },
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(
+                                            height: TimelinePanel._laneGap),
+                                        // The audio lane: clips float freely,
+                                        // positioned by their own `start`
+                                        // (unlike the video track, they don't
+                                        // shift each other).
+                                        SizedBox(
+                                          height:
+                                              TimelinePanel._audioLaneHeight,
+                                          width: contentW.toDouble(),
+                                          child: Stack(
+                                            children: [
+                                              Positioned.fill(
+                                                child: GestureDetector(
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onTapDown: (_) => ref
+                                                      .read(
+                                                          selectedAudioClipProvider
+                                                              .notifier)
+                                                      .set(null),
+                                                ),
+                                              ),
+                                              for (var i = 0;
+                                                  i < audioClips.length;
+                                                  i++)
+                                                Positioned(
+                                                  key: ValueKey(
+                                                      audioClips[i].id),
+                                                  left: audioClips[i].start *
+                                                      px,
+                                                  width:
+                                                      audioClips[i].duration *
+                                                          px,
+                                                  top: 0,
+                                                  bottom: 0,
+                                                  child: _AudioClipSlot(
+                                                    clip: audioClips[i],
+                                                    index: i,
+                                                    px: px,
+                                                    selected:
+                                                        audioClips[i].id ==
+                                                            selectedAudioId,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  // Playhead
+                                  // Playhead, spanning both lanes.
                                   Positioned(
                                     left: playheadT * px,
                                     top: 0,
@@ -181,7 +317,7 @@ class TimelinePanel extends ConsumerWidget {
   Widget _trackHeader() => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(height: _rulerHeight),
+          const SizedBox(height: TimelinePanel._rulerHeight),
           const Divider(height: 1, thickness: 1, color: AppColors.line),
           Padding(
             padding: const EdgeInsets.all(8),
@@ -212,6 +348,18 @@ class TimelinePanel extends ConsumerWidget {
                 _hdrIcon(Icons.visibility_outlined),
                 _hdrIcon(Icons.volume_up_outlined),
                 _hdrIcon(Icons.more_horiz),
+              ],
+            ),
+          ),
+          const SizedBox(height: TimelinePanel._laneGap),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                Icon(Icons.audiotrack_outlined,
+                    size: 15, color: Colors.white.withValues(alpha: 0.5)),
+                const SizedBox(width: 6),
+                const Text('Audio', style: TextStyle(fontSize: 11)),
               ],
             ),
           ),
@@ -313,14 +461,23 @@ class _ClipBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final count = thumbnailCountForWidth(widthPx);
+    final isImage = clip.mediaType == MediaType.image;
+
+    // An image clip has no frames to extract and no real audio — show the
+    // source image itself as the bar's background instead of a filmstrip,
+    // and skip the waveform strip entirely.
+    final count = isImage ? 0 : thumbnailCountForWidth(widthPx);
     final waveformWidth = waveformWidthForBarWidth(widthPx);
-    final thumbs = ref
-        .watch(clipFilmstripProvider(clip, count, kFilmstripThumbHeight))
-        .value;
-    final wave = ref
-        .watch(clipWaveformProvider(clip, waveformWidth, kWaveformHeight))
-        .value;
+    final thumbs = isImage
+        ? null
+        : ref
+            .watch(clipFilmstripProvider(clip, count, kFilmstripThumbHeight))
+            .value;
+    final wave = isImage
+        ? null
+        : ref
+            .watch(clipWaveformProvider(clip, waveformWidth, kWaveformHeight))
+            .value;
 
     return Container(
       margin: const EdgeInsets.only(right: 2),
@@ -336,6 +493,13 @@ class _ClipBar extends ConsumerWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
+          if (isImage)
+            Image.file(
+              File(clip.sourcePath),
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
           // Filmstrip: real frames tiled across the bar, behind everything
           // else. Falls back to the plain bar colour until frames are ready.
           if (thumbs != null && thumbs.isNotEmpty)
@@ -507,6 +671,215 @@ class _ClipSlotState extends State<_ClipSlot> {
               SplitHandle(axis: Axis.vertical, onDrag: widget.onTrimRightDx),
         ),
       ],
+    );
+  }
+}
+
+/// An audio-lane clip bar: tap to select, drag the body to move its `start`,
+/// drag the left/right edge handles to trim (adjusting `inPoint`/`outPoint` —
+/// the left handle also shifts `start` so the bar's left edge tracks the
+/// drag, same visual feel as trimming a video clip). A small close button
+/// appears on the selected bar to delete it.
+class _AudioClipSlot extends ConsumerStatefulWidget {
+  const _AudioClipSlot({
+    required this.clip,
+    required this.index,
+    required this.px,
+    required this.selected,
+  });
+
+  final AudioClip clip;
+  final int index;
+  final double px;
+  final bool selected;
+
+  static const _handleWidth = 8.0;
+  static const _minLength = 0.1;
+
+  @override
+  ConsumerState<_AudioClipSlot> createState() => _AudioClipSlotState();
+}
+
+class _AudioClipSlotState extends ConsumerState<_AudioClipSlot> {
+  double _dragDx = 0;
+
+  AudioClips get _notifier => ref.read(audioClipsProvider.notifier);
+
+  void _select() =>
+      ref.read(selectedAudioClipProvider.notifier).set(widget.clip.id);
+
+  void _commitMove() {
+    final shift = _dragDx;
+    setState(() => _dragDx = 0);
+    if (shift.abs() < 1) return; // negligible movement — treat as a tap
+    final newStart =
+        (widget.clip.start + shift / widget.px).clamp(0.0, double.infinity);
+    _notifier.update(widget.index, widget.clip.copyWith(start: newStart));
+  }
+
+  void _trimLeft(double dx) {
+    final deltaSeconds = dx / widget.px;
+    final c = widget.clip;
+    var newIn = (c.inPoint + deltaSeconds).clamp(0.0, c.sourceDuration);
+    if (c.outPoint - newIn < _AudioClipSlot._minLength) {
+      newIn = (c.outPoint - _AudioClipSlot._minLength).clamp(0.0, c.sourceDuration);
+    }
+    final actualDelta = newIn - c.inPoint;
+    _notifier.update(
+        widget.index,
+        c.copyWith(
+            inPoint: newIn,
+            start: (c.start + actualDelta).clamp(0.0, double.infinity)));
+  }
+
+  void _trimRight(double dx) {
+    final deltaSeconds = dx / widget.px;
+    final c = widget.clip;
+    var newOut = (c.outPoint + deltaSeconds).clamp(0.0, c.sourceDuration);
+    if (newOut - c.inPoint < _AudioClipSlot._minLength) {
+      newOut = (c.inPoint + _AudioClipSlot._minLength).clamp(0.0, c.sourceDuration);
+    }
+    _notifier.update(widget.index, c.copyWith(outPoint: newOut));
+  }
+
+  void _delete() {
+    _notifier.removeAt(widget.index);
+    ref.read(selectedAudioClipProvider.notifier).set(null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          left: _AudioClipSlot._handleWidth,
+          right: _AudioClipSlot._handleWidth,
+          child: Transform.translate(
+            offset: Offset(_dragDx, 0),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _select,
+              onHorizontalDragStart: (_) => setState(() => _dragDx = 0),
+              onHorizontalDragUpdate: (d) =>
+                  setState(() => _dragDx += d.delta.dx),
+              onHorizontalDragEnd: (_) => _commitMove(),
+              onHorizontalDragCancel: () => setState(() => _dragDx = 0),
+              child: _AudioClipBar(
+                clip: widget.clip,
+                widthPx: widget.clip.duration * widget.px,
+                selected: widget.selected,
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          child: SplitHandle(axis: Axis.vertical, onDrag: _trimLeft),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 0,
+          child: SplitHandle(axis: Axis.vertical, onDrag: _trimRight),
+        ),
+        if (widget.selected)
+          Positioned(
+            right: _AudioClipSlot._handleWidth + 2,
+            top: 2,
+            child: GestureDetector(
+              onTap: _delete,
+              child: Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.close, size: 12, color: Colors.white),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// An audio clip's bar background: a waveform across its width (reusing
+/// [audioClipWaveformProvider], which shares the engine's on-disk waveform
+/// cache with the main track's clip bars), the filename label, and the
+/// selected/accent border. Falls back to a plain colour bar while the
+/// waveform is loading or unavailable, same spirit as [_ClipBar].
+class _AudioClipBar extends ConsumerWidget {
+  const _AudioClipBar(
+      {required this.clip, required this.widthPx, required this.selected});
+
+  final AudioClip clip;
+  final double widthPx;
+  final bool selected;
+
+  static const _barColor = Color(0xFF2D4430);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final waveformWidth = waveformWidthForBarWidth(widthPx);
+    final wave = ref
+        .watch(audioClipWaveformProvider(
+            clip, waveformWidth, kWaveformHeight * 2))
+        .value;
+
+    return Container(
+      margin: const EdgeInsets.only(right: 2),
+      decoration: BoxDecoration(
+        color: _barColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: selected ? AppColors.accent : Colors.transparent,
+          width: 2,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (wave != null)
+            Center(
+              child: Image.file(
+                File(wave),
+                fit: BoxFit.fill,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 4,
+                height: double.infinity,
+                color: AppColors.accent.withValues(alpha: 0.8),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 1),
+                  margin: const EdgeInsets.only(top: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(clip.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

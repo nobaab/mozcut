@@ -49,7 +49,7 @@ final class AppProvider extends $NotifierProvider<App, Project?> {
   }
 }
 
-String _$appHash() => r'04f64ff4138a27d34a135310d153f7d105ce4098';
+String _$appHash() => r'6ad3206cda629f6a518cbe30543909f11624e26e';
 
 /// Orchestrates the app's two screens. `state` is the open project, or null for
 /// the launcher. Create / open / close all live here because each touches the

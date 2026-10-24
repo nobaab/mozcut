@@ -1,6 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../../../data/engine/ffmpeg_engine.dart';
+import '../../../../domain/models/audio_clip.dart';
 import '../../../../domain/models/clip.dart';
 
 part 'thumbnails_view_model.g.dart';
@@ -97,6 +98,35 @@ Future<String?> clipWaveform(
   final engine = ref.watch(engineProvider);
   try {
     return await engine.waveformPng(clip: clip, width: width, height: height);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Waveform PNG path for an [AudioClip]'s trimmed region, for the audio
+/// lane's clip bars. [Engine.waveformPng] only knows about [Clip], so this
+/// adapts the audio clip's source/trim into a throwaway [Clip] with the same
+/// `(sourcePath, inPoint, outPoint)` — the cache key [FfmpegEngine] uses for
+/// waveform PNGs — so this reuses the exact same on-disk cache as the main
+/// track's clip waveforms rather than needing a parallel one. `keepAlive` for
+/// the same reason as [clipWaveform].
+@Riverpod(keepAlive: true)
+Future<String?> audioClipWaveform(
+  Ref ref,
+  AudioClip clip,
+  int width,
+  int height,
+) async {
+  if (width <= 0) return null;
+  final engine = ref.watch(engineProvider);
+  final proxy = Clip(
+    sourcePath: clip.sourcePath,
+    sourceDuration: clip.sourceDuration,
+    inPoint: clip.inPoint,
+    outPoint: clip.outPoint,
+  );
+  try {
+    return await engine.waveformPng(clip: proxy, width: width, height: height);
   } catch (_) {
     return null;
   }

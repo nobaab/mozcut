@@ -3,11 +3,13 @@ import 'dart:io';
 
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../domain/models/audio_clip.dart';
 import '../../domain/models/caption.dart';
 import '../../domain/models/clip.dart';
 import '../../domain/models/color_filter_presets.dart';
 import '../../domain/models/effect_presets.dart';
 import '../../domain/models/export_settings.dart';
+import '../../domain/models/media_type.dart';
 import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
 import '../../domain/models/transition_presets.dart';
@@ -117,6 +119,7 @@ class FfmpegEngine implements Engine {
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    List<AudioClip> audioClips = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double progress)? onProgress,
@@ -132,6 +135,7 @@ class FfmpegEngine implements Engine {
       clips: clips,
       textOverlays: textOverlays,
       stickerOverlays: stickerOverlays,
+      audioClips: audioClips,
       scaleFilter: settings.scaleFilter,
       canvasWidth: canvasWidth,
       canvasHeight: canvasHeight,
@@ -167,6 +171,7 @@ class FfmpegEngine implements Engine {
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    List<AudioClip> audioClips = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double progress)? onProgress,
@@ -187,6 +192,7 @@ class FfmpegEngine implements Engine {
       clips: clips,
       textOverlays: textOverlays,
       stickerOverlays: stickerOverlays,
+      audioClips: audioClips,
       scaleFilter: 'scale=$_previewWidth:-2',
       canvasWidth: canvasWidth,
       canvasHeight: canvasHeight,
@@ -236,6 +242,7 @@ class FfmpegEngine implements Engine {
     required List<Clip> clips,
     required List<TextOverlay> textOverlays,
     List<StickerOverlay> stickerOverlays = const [],
+    List<AudioClip> audioClips = const [],
     String? scaleFilter,
     int canvasWidth = 1920,
     int canvasHeight = 1080,
@@ -254,13 +261,53 @@ class FfmpegEngine implements Engine {
         await srtFile.writeAsString(_buildSrt(clips));
       }
 
+      // Each clip contributes one video input, plus (for an image clip, which
+      // has no audio stream of its own) a second, synthetic silent-audio
+      // input right after it — see the `MediaType.image` branch below. Index
+      // bookkeeping is kept in parallel lists rather than assuming "clip i ==
+      // input i" (true only when there are no image clips), so the two never
+      // drift.
       final inputArgs = <String>[];
+      final videoInputIndex = <int>[];
+      final audioInputIndex = <int>[];
+      var nextInputIndex = 0;
       for (final clip in clips) {
-        inputArgs.addAll([
-          '-ss', clip.inPoint.toStringAsFixed(3),
-          '-to', clip.outPoint.toStringAsFixed(3),
-          '-i', clip.sourcePath,
-        ]);
+        if (clip.mediaType == MediaType.image) {
+          // `-loop 1 -t <duration> -i <image>` turns a still image into a
+          // finite video stream of exactly the clip's trimmed length (an
+          // image has no intrinsic duration, so there is no `-ss`/`-to`
+          // region to seek — the whole file is "the frame"). `-t` is applied
+          // pre-speed, same as `-to - -ss` is for a real video clip; the
+          // clip's own `speed` is applied afterwards via `setpts`, same as
+          // every other clip.
+          final stillDuration =
+              (clip.outPoint - clip.inPoint).clamp(0.01, double.infinity);
+          inputArgs.addAll([
+            '-loop', '1',
+            '-t', stillDuration.toStringAsFixed(3),
+            '-i', clip.sourcePath,
+          ]);
+          videoInputIndex.add(nextInputIndex++);
+          // A silent audio input of the same length, so this clip's `[N:a:0]`
+          // exists and lines up with the video input's duration — needed
+          // because `concat`/`xfade`+`acrossfade` (and later, mixing in
+          // `audioClips`) all expect every clip to have an audio pad.
+          inputArgs.addAll([
+            '-f', 'lavfi',
+            '-t', stillDuration.toStringAsFixed(3),
+            '-i', 'anullsrc=r=48000:cl=stereo',
+          ]);
+          audioInputIndex.add(nextInputIndex++);
+        } else {
+          inputArgs.addAll([
+            '-ss', clip.inPoint.toStringAsFixed(3),
+            '-to', clip.outPoint.toStringAsFixed(3),
+            '-i', clip.sourcePath,
+          ]);
+          videoInputIndex.add(nextInputIndex);
+          audioInputIndex.add(nextInputIndex);
+          nextInputIndex++;
+        }
       }
 
       // Per clip: transform (scale/pos/rotate/flip) on video, speed (setpts +
@@ -271,9 +318,9 @@ class FfmpegEngine implements Engine {
       final audioLabels = <String>[];
       for (var i = 0; i < clips.length; i++) {
         final clip = clips[i];
-        var vlabel = _videoFilterChain(
-            filter, i, clip, canvasWidth, canvasHeight); // label, no brackets
-        var alabel = '$i:a:0';
+        var vlabel = _videoFilterChain(filter, i, videoInputIndex[i], clip,
+            canvasWidth, canvasHeight); // label, no brackets
+        var alabel = '${audioInputIndex[i]}:a:0';
         if (clip.speed != 1.0) {
           filter.write(
               '[$vlabel]setpts=PTS/${_fmtFilterNum(clip.speed)}[sv$i];');
@@ -281,7 +328,7 @@ class FfmpegEngine implements Engine {
           final atempo = _atempoChain(clip.speed)
               .map((f) => 'atempo=${_fmtFilterNum(f)}')
               .join(',');
-          filter.write('[$i:a:0]$atempo[sa$i];');
+          filter.write('[${audioInputIndex[i]}:a:0]$atempo[sa$i];');
           alabel = 'sa$i';
         }
         final achain = _audioFilterChain(clip);
@@ -361,11 +408,46 @@ class FfmpegEngine implements Engine {
         }
       }
 
+      // Mix in the project's audio lane: each AudioClip gets its own input
+      // (trimmed the same way a video clip's is, via -ss/-to), a
+      // volume/fade chain, then `adelay` to place it at its `start` on the
+      // final timeline, then one `amix` combines all of them with the main
+      // joined audio. `adelay=...:all=1` applies the same delay to every
+      // channel without needing to know the source's channel count up front.
+      // Fully additive: an empty `audioClips` (the default) never writes any
+      // of this, so `audioLabel` stays exactly `[${joined.audio}]` — the
+      // graph export/renderPreview already produced before this feature
+      // existed.
+      var audioLabel = '[${joined.audio}]';
+      if (audioClips.isNotEmpty) {
+        final mixLabels = <String>[joined.audio];
+        for (var i = 0; i < audioClips.length; i++) {
+          final ac = audioClips[i];
+          inputArgs.addAll([
+            '-ss', ac.inPoint.toStringAsFixed(3),
+            '-to', ac.outPoint.toStringAsFixed(3),
+            '-i', ac.sourcePath,
+          ]);
+          final srcIndex = nextInputIndex++;
+          final chain = <String>[
+            ?_audioClipFilterChain(ac),
+            'adelay=${(ac.start * 1000).clamp(0, double.infinity).round()}:all=1',
+          ];
+          final label = 'mixa$i';
+          filter.write(';[$srcIndex:a:0]${chain.join(',')}[$label]');
+          mixLabels.add(label);
+        }
+        final mixedLabel = 'outmix';
+        filter.write(
+            ';${mixLabels.map((l) => '[$l]').join()}amix=inputs=${mixLabels.length}:duration=first:normalize=0[$mixedLabel]');
+        audioLabel = '[$mixedLabel]';
+      }
+
       return _FilterGraph(
         inputArgs: inputArgs,
         filterComplex: filter.toString(),
         videoLabel: videoLabel,
-        audioLabel: '[${joined.audio}]',
+        audioLabel: audioLabel,
         tempFiles: [?srtFile, ...overlayFiles],
       );
     } catch (_) {
@@ -591,11 +673,16 @@ class FfmpegEngine implements Engine {
   }
 
   /// Writes clip [i]'s transform filter chain into [filter] and returns the
-  /// output pad label (without brackets) to feed into concat. [canvasWidth]/
-  /// [canvasHeight] are the project's output canvas (its aspect ratio) —
-  /// every clip is fit ("contain") into this size before composition.
-  String _videoFilterChain(StringBuffer filter, int i, Clip clip,
-      int canvasWidth, int canvasHeight) {
+  /// output pad label (without brackets) to feed into concat. [i] only names
+  /// this clip's intermediate labels (`bg$i`/`fg$i`/`v$i`) — the actual ffmpeg
+  /// input to read video from is [inputIndex] (`[$inputIndex:v:0]`), which
+  /// differs from [i] once an earlier clip is an image (see
+  /// `_buildFilterGraph`'s `videoInputIndex`/`audioInputIndex` bookkeeping).
+  /// [canvasWidth]/[canvasHeight] are the project's output canvas (its aspect
+  /// ratio) — every clip is fit ("contain") into this size before
+  /// composition.
+  String _videoFilterChain(StringBuffer filter, int i, int inputIndex,
+      Clip clip, int canvasWidth, int canvasHeight) {
     final bg = 'bg$i';
     final fg = 'fg$i';
     final out = 'v$i';
@@ -653,7 +740,7 @@ class FfmpegEngine implements Engine {
         clip.effectId == null ? null : kEffectPresets[clip.effectId];
     if (effect != null) steps.add(effect);
 
-    filter.write('[$i:v:0]${steps.join(',')}[$fg];');
+    filter.write('[$inputIndex:v:0]${steps.join(',')}[$fg];');
 
     // 3. Composite the foreground onto the background, offset from center
     // by posX/posY (fractions of half the canvas size — see Clip's doc
@@ -686,6 +773,26 @@ class FfmpegEngine implements Engine {
     if (clip.fadeOut > 0) {
       final start =
           (clip.duration - clip.fadeOut).clamp(0, clip.duration);
+      parts.add(
+          'afade=t=out:st=${start.toStringAsFixed(3)}:d=${clip.fadeOut.toStringAsFixed(3)}');
+    }
+    return parts.isEmpty ? null : parts.join(',');
+  }
+
+  /// Same idea as [_audioFilterChain] but for an [AudioClip] on the project's
+  /// audio lane — volume/fades only (the `adelay` placing it on the final
+  /// timeline is added separately by the caller, since it isn't part of
+  /// "does this clip need any processing at all").
+  static String? _audioClipFilterChain(AudioClip clip) {
+    final parts = <String>[];
+    if (clip.volume != 1.0) {
+      parts.add('volume=${clip.volume.toStringAsFixed(3)}');
+    }
+    if (clip.fadeIn > 0) {
+      parts.add('afade=t=in:st=0:d=${clip.fadeIn.toStringAsFixed(3)}');
+    }
+    if (clip.fadeOut > 0) {
+      final start = (clip.duration - clip.fadeOut).clamp(0, clip.duration);
       parts.add(
           'afade=t=out:st=${start.toStringAsFixed(3)}:d=${clip.fadeOut.toStringAsFixed(3)}');
     }

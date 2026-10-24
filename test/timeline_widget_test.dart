@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mozcut/data/engine/engine.dart';
 import 'package:mozcut/data/engine/ffmpeg_engine.dart';
+import 'package:mozcut/domain/models/audio_clip.dart';
 import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
@@ -25,6 +26,7 @@ class FakeEngine implements Engine {
     ExportSettings settings = const ExportSettings(),
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    List<AudioClip> audioClips = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,
@@ -35,6 +37,7 @@ class FakeEngine implements Engine {
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
+    List<AudioClip> audioClips = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,

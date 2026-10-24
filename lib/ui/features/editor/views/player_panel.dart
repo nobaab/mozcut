@@ -11,6 +11,7 @@ import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
+import '../view_models/audio_clips_view_model.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/player_control.dart';
 import '../view_models/sticker_overlays_view_model.dart';
@@ -173,6 +174,7 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     if (clips.isEmpty) return;
     final textOverlays = ref.read(textOverlaysProvider);
     final stickerOverlays = ref.read(stickerOverlaysProvider);
+    final audioClips = ref.read(audioClipsProvider);
     final engine = ref.read(engineProvider);
     final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
 
@@ -182,6 +184,7 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
           clips: clips,
           textOverlays: textOverlays,
           stickerOverlays: stickerOverlays,
+          audioClips: audioClips,
           canvasWidth: canvas.width,
           canvasHeight: canvas.height);
       if (!mounted) return;

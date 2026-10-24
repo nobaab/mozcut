@@ -244,3 +244,111 @@ final class ClipWaveformFamily extends $Family
   @override
   String toString() => r'clipWaveformProvider';
 }
+
+/// Waveform PNG path for an [AudioClip]'s trimmed region, for the audio
+/// lane's clip bars. [Engine.waveformPng] only knows about [Clip], so this
+/// adapts the audio clip's source/trim into a throwaway [Clip] with the same
+/// `(sourcePath, inPoint, outPoint)` — the cache key [FfmpegEngine] uses for
+/// waveform PNGs — so this reuses the exact same on-disk cache as the main
+/// track's clip waveforms rather than needing a parallel one. `keepAlive` for
+/// the same reason as [clipWaveform].
+
+@ProviderFor(audioClipWaveform)
+final audioClipWaveformProvider = AudioClipWaveformFamily._();
+
+/// Waveform PNG path for an [AudioClip]'s trimmed region, for the audio
+/// lane's clip bars. [Engine.waveformPng] only knows about [Clip], so this
+/// adapts the audio clip's source/trim into a throwaway [Clip] with the same
+/// `(sourcePath, inPoint, outPoint)` — the cache key [FfmpegEngine] uses for
+/// waveform PNGs — so this reuses the exact same on-disk cache as the main
+/// track's clip waveforms rather than needing a parallel one. `keepAlive` for
+/// the same reason as [clipWaveform].
+
+final class AudioClipWaveformProvider
+    extends $FunctionalProvider<AsyncValue<String?>, String?, FutureOr<String?>>
+    with $FutureModifier<String?>, $FutureProvider<String?> {
+  /// Waveform PNG path for an [AudioClip]'s trimmed region, for the audio
+  /// lane's clip bars. [Engine.waveformPng] only knows about [Clip], so this
+  /// adapts the audio clip's source/trim into a throwaway [Clip] with the same
+  /// `(sourcePath, inPoint, outPoint)` — the cache key [FfmpegEngine] uses for
+  /// waveform PNGs — so this reuses the exact same on-disk cache as the main
+  /// track's clip waveforms rather than needing a parallel one. `keepAlive` for
+  /// the same reason as [clipWaveform].
+  AudioClipWaveformProvider._({
+    required AudioClipWaveformFamily super.from,
+    required (AudioClip, int, int) super.argument,
+  }) : super(
+         retry: null,
+         name: r'audioClipWaveformProvider',
+         isAutoDispose: false,
+         dependencies: null,
+         $allTransitiveDependencies: null,
+       );
+
+  @override
+  String debugGetCreateSourceHash() => _$audioClipWaveformHash();
+
+  @override
+  String toString() {
+    return r'audioClipWaveformProvider'
+        ''
+        '$argument';
+  }
+
+  @$internal
+  @override
+  $FutureProviderElement<String?> $createElement($ProviderPointer pointer) =>
+      $FutureProviderElement(pointer);
+
+  @override
+  FutureOr<String?> create(Ref ref) {
+    final argument = this.argument as (AudioClip, int, int);
+    return audioClipWaveform(ref, argument.$1, argument.$2, argument.$3);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is AudioClipWaveformProvider && other.argument == argument;
+  }
+
+  @override
+  int get hashCode {
+    return argument.hashCode;
+  }
+}
+
+String _$audioClipWaveformHash() => r'f4221c61c920a58aea136c9f853bbb33cda8d960';
+
+/// Waveform PNG path for an [AudioClip]'s trimmed region, for the audio
+/// lane's clip bars. [Engine.waveformPng] only knows about [Clip], so this
+/// adapts the audio clip's source/trim into a throwaway [Clip] with the same
+/// `(sourcePath, inPoint, outPoint)` — the cache key [FfmpegEngine] uses for
+/// waveform PNGs — so this reuses the exact same on-disk cache as the main
+/// track's clip waveforms rather than needing a parallel one. `keepAlive` for
+/// the same reason as [clipWaveform].
+
+final class AudioClipWaveformFamily extends $Family
+    with $FunctionalFamilyOverride<FutureOr<String?>, (AudioClip, int, int)> {
+  AudioClipWaveformFamily._()
+    : super(
+        retry: null,
+        name: r'audioClipWaveformProvider',
+        dependencies: null,
+        $allTransitiveDependencies: null,
+        isAutoDispose: false,
+      );
+
+  /// Waveform PNG path for an [AudioClip]'s trimmed region, for the audio
+  /// lane's clip bars. [Engine.waveformPng] only knows about [Clip], so this
+  /// adapts the audio clip's source/trim into a throwaway [Clip] with the same
+  /// `(sourcePath, inPoint, outPoint)` — the cache key [FfmpegEngine] uses for
+  /// waveform PNGs — so this reuses the exact same on-disk cache as the main
+  /// track's clip waveforms rather than needing a parallel one. `keepAlive` for
+  /// the same reason as [clipWaveform].
+
+  AudioClipWaveformProvider call(AudioClip clip, int width, int height) =>
+      AudioClipWaveformProvider._(argument: (clip, width, height), from: this);
+
+  @override
+  String toString() => r'audioClipWaveformProvider';
+}

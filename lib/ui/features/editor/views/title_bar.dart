@@ -7,6 +7,7 @@ import '../../../../domain/models/project.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
+import '../view_models/audio_clips_view_model.dart';
 import '../view_models/editor_view_model.dart';
 import 'editor_shortcuts.dart';
 import 'export_dialog.dart';
@@ -109,6 +110,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
     final clips = ref.read(editorProvider).clips;
     final textOverlays = ref.read(textOverlaysProvider);
     final stickerOverlays = ref.read(stickerOverlaysProvider);
+    final audioClips = ref.read(audioClipsProvider);
     final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
     final progress = ref.read(exportProgressProvider.notifier);
     progress.set(0);
@@ -119,6 +121,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
           settings: settings,
           textOverlays: textOverlays,
           stickerOverlays: stickerOverlays,
+          audioClips: audioClips,
           canvasWidth: canvas.width,
           canvasHeight: canvas.height,
           onProgress: progress.set);

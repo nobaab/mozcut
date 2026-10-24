@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mozcut/domain/models/audio_clip.dart';
 import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/project.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
@@ -19,6 +20,14 @@ void main() {
       stickerOverlays: [
         StickerOverlay(emoji: '🔥', start: 1, end: 4, size: 0.15),
       ],
+      audioClips: [
+        AudioClip(
+            sourcePath: '/a/song.mp3',
+            sourceDuration: 60,
+            start: 2,
+            outPoint: 15,
+            volume: 1.2),
+      ],
     );
 
     final restored =
@@ -37,19 +46,26 @@ void main() {
     expect(restored.stickerOverlays.length, 1);
     expect(restored.stickerOverlays.first.emoji, '🔥');
     expect(restored.stickerOverlays.first.size, 0.15);
+    expect(restored.audioClips.length, 1);
+    expect(restored.audioClips.first.sourcePath, '/a/song.mp3');
+    expect(restored.audioClips.first.start, 2);
+    expect(restored.audioClips.first.outPoint, 15);
+    expect(restored.audioClips.first.volume, 1.2);
   });
 
-  test('project defaults to no text/sticker overlays when the keys are '
+  test('project defaults to no text/sticker/audio clips when the keys are '
       'absent (old manifests)', () {
     final project = Project(folderPath: '/tmp/Old Project', name: 'Old');
     final manifest = project.toManifest()
       ..remove('textOverlays')
-      ..remove('stickerOverlays');
+      ..remove('stickerOverlays')
+      ..remove('audioClips');
 
     final restored = Project.fromManifest(project.folderPath, manifest);
 
     expect(restored.textOverlays, isEmpty);
     expect(restored.stickerOverlays, isEmpty);
+    expect(restored.audioClips, isEmpty);
   });
 
   test('VideoSettings label formats whole and fractional fps', () {

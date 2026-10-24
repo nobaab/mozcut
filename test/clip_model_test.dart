@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mozcut/domain/models/clip.dart';
+import 'package:mozcut/domain/models/media_type.dart';
 
 /// Covers the transition fields on [Clip]: defaults, copyWith, and the
 /// toJson/fromJson round-trip (including old-manifest back-compat, matching
@@ -107,6 +108,51 @@ void main() {
       final json = clip.toJson()..remove('originalSourcePath');
       final restored = Clip.fromJson(json);
       expect(restored.originalSourcePath, isNull);
+    });
+  });
+
+  group('Clip mediaType field', () {
+    test('defaults to video', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);
+      expect(clip.mediaType, MediaType.video);
+      expect(clip.isImage, isFalse);
+    });
+
+    test('can be constructed as an image clip', () {
+      final clip = Clip(
+        sourcePath: '/a.jpg',
+        sourceDuration: kImageSourceDurationCap,
+        outPoint: kImageDefaultDuration,
+        mediaType: MediaType.image,
+      );
+      expect(clip.mediaType, MediaType.image);
+      expect(clip.isImage, isTrue);
+      expect(clip.duration, kImageDefaultDuration);
+    });
+
+    test('copyWith preserves mediaType by default and can override it', () {
+      final clip = Clip(
+          sourcePath: '/a.jpg', sourceDuration: 10, mediaType: MediaType.image);
+      final unchanged = clip.copyWith(scale: 2.0);
+      expect(unchanged.mediaType, MediaType.image);
+
+      final changed = clip.copyWith(mediaType: MediaType.video);
+      expect(changed.mediaType, MediaType.video);
+    });
+
+    test('toJson/fromJson round-trips mediaType', () {
+      final clip = Clip(
+          sourcePath: '/a.jpg', sourceDuration: 10, mediaType: MediaType.image);
+      final restored = Clip.fromJson(clip.toJson());
+      expect(restored.mediaType, MediaType.image);
+    });
+
+    test('fromJson defaults mediaType to video when the key is absent '
+        '(old manifests)', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);
+      final json = clip.toJson()..remove('mediaType');
+      final restored = Clip.fromJson(json);
+      expect(restored.mediaType, MediaType.video);
     });
   });
 }
