@@ -2,7 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/keyframe.dart';
+import 'package:mozcut/domain/models/project.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
+import 'package:mozcut/ui/features/launcher/view_models/launcher_view_model.dart';
 
 /// Covers the timeline-interaction additions to the [Editor] notifier:
 /// drag-to-reorder and the per-clip trim handles. Pure view-model logic, no
@@ -119,20 +121,41 @@ void main() {
       expect(clipAt(0).outPoint, 10);
     });
 
-    test('keeps at least a 0.1s clip when the left handle overshoots', () {
+    test(
+        'keeps at least one frame (1/30s, no project open so fps falls '
+        'back to 30) when the left handle overshoots', () {
       final id = clipAt(0).id;
       editor.setTrim(id, outPoint: 2);
       editor.setTrim(id, inPoint: 9); // would cross outPoint (2)
-      expect(clipAt(0).duration, closeTo(0.1, 0.001));
-      expect(clipAt(0).outPoint - clipAt(0).inPoint, closeTo(0.1, 0.001));
+      expect(clipAt(0).duration, closeTo(1 / 30, 0.0001));
+      expect(clipAt(0).outPoint - clipAt(0).inPoint, closeTo(1 / 30, 0.0001));
     });
 
-    test('keeps at least a 0.1s clip when the right handle overshoots', () {
+    test(
+        'keeps at least one frame (1/30s, no project open so fps falls '
+        'back to 30) when the right handle overshoots', () {
       final id = clipAt(0).id;
       editor.setTrim(id, inPoint: 8);
       editor.setTrim(id, outPoint: 1); // would cross inPoint (8)
-      expect(clipAt(0).duration, closeTo(0.1, 0.001));
-      expect(clipAt(0).outPoint - clipAt(0).inPoint, closeTo(0.1, 0.001));
+      expect(clipAt(0).duration, closeTo(1 / 30, 0.0001));
+      expect(clipAt(0).outPoint - clipAt(0).inPoint, closeTo(1 / 30, 0.0001));
+    });
+
+    test("uses the open project's fps for the minimum clip length", () {
+      final container2 = ProviderContainer();
+      addTearDown(container2.dispose);
+      container2.read(appProvider.notifier).state = Project(
+        folderPath: '/tmp/p',
+        name: 'p',
+        video: const VideoSettings(fps: 24),
+      );
+      final editor2 = container2.read(editorProvider.notifier);
+      editor2.loadClips([Clip(sourcePath: '/a.mp4', sourceDuration: 10)]);
+      final id = container2.read(editorProvider).clips.first.id;
+      editor2.setTrim(id, outPoint: 2);
+      editor2.setTrim(id, inPoint: 9); // would cross outPoint (2)
+      expect(container2.read(editorProvider).clips.first.duration,
+          closeTo(1 / 24, 0.0001));
     });
 
     test('does not affect other clips', () {
@@ -146,6 +169,89 @@ void main() {
       editor.setTrim('does-not-exist', inPoint: 5);
       expect(clipAt(0).inPoint, 0);
       expect(clipAt(0).duration, 10);
+    });
+  });
+
+  group('duplicateSelected', () {
+    test('inserts a copy of the selected clip immediately after it, '
+        'selecting the copy', () {
+      editor.select(clipAt(1).id);
+      editor.duplicateSelected();
+
+      final clips = container.read(editorProvider).clips;
+      expect(clips.length, 4);
+      expect(clips.map((c) => c.fileName).toList(),
+          ['a.mp4', 'b.mp4', 'b.mp4', 'c.mp4']);
+      // The copy is a distinct clip (its own id), not the same instance.
+      expect(clips[2].id, isNot(clips[1].id));
+      expect(container.read(editorProvider).selectedId, clips[2].id);
+    });
+
+    test('the duplicate carries the original\'s edits (trim, speed)', () {
+      final id = clipAt(0).id;
+      editor.setTrim(id, inPoint: 2, outPoint: 8);
+      editor.select(id);
+      editor.setSelectedSpeed(2.0);
+      editor.select(id);
+      editor.duplicateSelected();
+
+      final copy = container.read(editorProvider).clips[1];
+      expect(copy.inPoint, 2);
+      expect(copy.outPoint, 8);
+      expect(copy.speed, 2.0);
+    });
+
+    test('does nothing when nothing is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(container.read(editorProvider).clips, isEmpty);
+      editor.duplicateSelected();
+      expect(container.read(editorProvider).clips, isEmpty);
+    });
+
+    test('is undoable', () {
+      editor.select(clipAt(0).id);
+      editor.duplicateSelected();
+      expect(container.read(editorProvider).clips.length, 4);
+      editor.undo();
+      expect(container.read(editorProvider).clips.length, 3);
+    });
+  });
+
+  group('rippleDeleteSelected', () {
+    test('removes the selected clip, same as removeSelected', () {
+      final id = clipAt(1).id;
+      editor.select(id);
+      editor.rippleDeleteSelected();
+
+      final clips = container.read(editorProvider).clips;
+      expect(clips.length, 2);
+      expect(clips.map((c) => c.fileName).toList(), ['a.mp4', 'c.mp4']);
+    });
+
+    test('later clips close the gap (the running-sum layout already '
+        'guarantees no gap exists)', () {
+      editor.select(clipAt(0).id);
+      editor.rippleDeleteSelected();
+      final clips = container.read(editorProvider).clips;
+      expect(clips.first.fileName, 'b.mp4');
+      expect(container.read(editorProvider).totalDuration, closeTo(20, 0.001));
+    });
+
+    test('does nothing when nothing is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.rippleDeleteSelected(), returnsNormally);
+    });
+
+    test('is undoable', () {
+      editor.select(clipAt(1).id);
+      editor.rippleDeleteSelected();
+      expect(container.read(editorProvider).clips.length, 2);
+      editor.undo();
+      expect(container.read(editorProvider).clips.length, 3);
     });
   });
 

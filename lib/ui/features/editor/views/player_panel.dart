@@ -19,6 +19,7 @@ import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/audio_clips_view_model.dart';
+import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/player_control.dart';
 import '../view_models/sticker_overlays_view_model.dart';
@@ -85,7 +86,12 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
       if (mounted) setState(() => _duration = d);
     });
     _player.stream.playing.listen((p) {
-      if (mounted) setState(() => _playing = p);
+      if (!mounted) return;
+      setState(() => _playing = p);
+      // Lets the timeline drive its playback auto-scroll-follow (see
+      // `IsPlaying` in editor_ui_state.dart) without holding a reference to
+      // this player.
+      ref.read(isPlayingProvider.notifier).set(p);
     });
   }
 

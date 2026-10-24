@@ -10,7 +10,9 @@ import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
 import 'package:mozcut/domain/models/video_overlay.dart';
+import 'package:mozcut/ui/features/editor/view_models/editor_ui_state.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
+import 'package:mozcut/ui/features/editor/view_models/player_control.dart';
 import 'package:mozcut/ui/features/editor/views/editor_shortcuts.dart';
 
 /// A stand-in engine so these UI tests never touch ffmpeg.
@@ -135,6 +137,125 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
     await tester.pump();
     expect(container.read(editorProvider).clips.length, 1);
+  });
+
+  testWidgets('Cmd+D duplicates the selected clip', (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+    expect(container.read(editorProvider).clips.length, 2);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+
+    expect(container.read(editorProvider).clips.length, 3);
+  });
+
+  testWidgets('Ctrl+D also duplicates the selected clip', (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect(container.read(editorProvider).clips.length, 3);
+  });
+
+  testWidgets('Shift+Delete ripple-deletes the selected clip', (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+    expect(container.read(editorProvider).clips.length, 2);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    expect(container.read(editorProvider).clips.length, 1);
+  });
+
+  testWidgets('n toggles the snap-enabled provider (default on)',
+      (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+    expect(container.read(snapEnabledProvider), isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+    await tester.pump();
+    expect(container.read(snapEnabledProvider), isFalse);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+    await tester.pump();
+    expect(container.read(snapEnabledProvider), isTrue);
+  });
+
+  testWidgets('Ctrl+= zooms the timeline in, Ctrl+- zooms it out',
+      (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+    final initial = container.read(timelineZoomProvider);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    final afterZoomIn = container.read(timelineZoomProvider);
+    expect(afterZoomIn, greaterThan(initial));
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(container.read(timelineZoomProvider), lessThan(afterZoomIn));
+  });
+
+  testWidgets(
+      'Cmd+Shift+= (the shifted "+" key, reported as LogicalKeyboardKey.add) '
+      'also zooms in', (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+    final initial = container.read(timelineZoomProvider);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    // LogicalKeyboardKey.add isn't a distinct physical key on its own — it's
+    // what Shift+Equal reports — so the physical key must be specified
+    // explicitly for the simulator to find a matching key code.
+    await tester.sendKeyEvent(LogicalKeyboardKey.add,
+        physicalKey: PhysicalKeyboardKey.equal);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+
+    expect(container.read(timelineZoomProvider), greaterThan(initial));
+  });
+
+  testWidgets('Shift+Right/Left seek a full second (not a frame)',
+      (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    var cmd = container.read(playerControlProvider);
+    expect(cmd?.type, PlayerCommandType.seekBy);
+    expect(cmd?.seconds, 1.0);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    cmd = container.read(playerControlProvider);
+    expect(cmd?.seconds, -1.0);
+  });
+
+  testWidgets('a plain Right arrow (no Shift) still nudges by one frame',
+      (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+
+    final cmd = container.read(playerControlProvider);
+    expect(cmd?.seconds, EditorShortcuts.nudgeSeconds);
   });
 
   testWidgets('a text field with focus is never hijacked by shortcuts',

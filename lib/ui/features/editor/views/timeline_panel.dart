@@ -14,6 +14,7 @@ import '../../../../domain/models/text_overlay.dart';
 import '../../../../domain/models/video_overlay.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/split_handle.dart';
+import '../timeline_snap.dart';
 import '../view_models/audio_clips_view_model.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
@@ -70,10 +71,42 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
   /// this is needed to derive a per-frame ratio.
   double _panZoomLastScale = 1.0;
 
+  /// True whenever a pointer is down (mouse/touch/stylus click-drag, a clip
+  /// move/trim, a ruler/empty-space scrub) or a trackpad pan/zoom gesture is
+  /// in progress anywhere in the timeline's scrolling area. Set via the
+  /// [Listener] wrapping it below — that `Listener` sees every raw pointer
+  /// event that hits this region regardless of which descendant gesture
+  /// recognizer (if any) ends up claiming it, so this one flag cheaply covers
+  /// every kind of "the user is actively doing something here" without
+  /// threading start/end callbacks through every gesture individually. Used
+  /// to suppress [_followPlayhead] so playback auto-scroll never fights a
+  /// manual interaction (see docs/TIMELINE-BEHAVIOR.md §5).
+  bool _gestureActive = false;
+
   @override
   void dispose() {
     _hScroll.dispose();
     super.dispose();
+  }
+
+  /// Keeps the playhead roughly 30% in from the right edge of the viewport
+  /// while the preview plays, so it never scrolls off-screen — ported from
+  /// rea-capcut's auto-scroll-follow rule (docs/TIMELINE-BEHAVIOR.md §5).
+  /// No-ops while [_gestureActive] (a manual scroll/drag/trim/scrub in
+  /// progress) so it never fights the user, and only actually moves the
+  /// scroll offset once the playhead has drifted past the comfort zone —
+  /// not on every single tick inside it — so normal playback within view
+  /// doesn't "creep".
+  void _followPlayhead(double playheadSeconds, double px) {
+    if (_gestureActive || !_hScroll.hasClients) return;
+    final viewport = _hScroll.position.viewportDimension;
+    if (viewport <= 0) return;
+    final playheadX = playheadSeconds * px;
+    final comfortZoneStart = _hScroll.offset + viewport * 0.7;
+    if (playheadX <= comfortZoneStart && playheadX >= _hScroll.offset) return;
+    final target = (playheadX - viewport * 0.7)
+        .clamp(0.0, _hScroll.position.maxScrollExtent);
+    _hScroll.jumpTo(target);
   }
 
   bool _zoomModifierDown() =>
@@ -228,12 +261,16 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
 
     final total = state.totalDuration;
     // Cumulative start offset of each clip on the timeline.
-    final starts = <double>[];
-    var acc = 0.0;
-    for (final c in state.clips) {
-      starts.add(acc);
-      acc += c.duration;
-    }
+    final starts = computeClipStarts(state.clips);
+
+    // Playback auto-scroll-follow (docs/TIMELINE-BEHAVIOR.md §5): `ref
+    // .listen` (not `.watch`) so this reacts to every playhead tick during
+    // playback without rebuilding the timeline itself — same reasoning as
+    // why [_Playhead] is isolated below. `_followPlayhead` no-ops unless
+    // [IsPlaying] is true and no gesture is in progress.
+    ref.listen<double>(playheadProvider, (previous, next) {
+      if (ref.read(isPlayingProvider)) _followPlayhead(next, px);
+    });
 
     // The text/overlay/audio lanes' items are positioned independently of
     // the video track, so the content area needs to be wide enough for
@@ -297,8 +334,15 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                     void scrub(double localDx) => _scrubToTimelineSeconds(
                         ref, state, starts, localDx / px);
                     return Listener(
+                      onPointerDown: (_) => _gestureActive = true,
+                      onPointerUp: (_) => _gestureActive = false,
+                      onPointerCancel: (_) => _gestureActive = false,
                       onPointerSignal: _handlePointerSignal,
-                      onPointerPanZoomStart: (_) => _panZoomLastScale = 1.0,
+                      onPointerPanZoomStart: (_) {
+                        _panZoomLastScale = 1.0;
+                        _gestureActive = true;
+                      },
+                      onPointerPanZoomEnd: (_) => _gestureActive = false,
                       onPointerPanZoomUpdate: _handlePanZoomUpdate,
                       child: SingleChildScrollView(
                         controller: _hScroll,
@@ -418,6 +462,8 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                                       index: i,
                                                       clips: state.clips,
                                                       starts: starts,
+                                                      audioClips: audioClips,
+                                                      overlays: videoOverlays,
                                                       px: px,
                                                       selected: state
                                                               .clips[i].id ==
@@ -434,34 +480,26 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                                                       .notifier)
                                                               .reorder(i,
                                                                   newIndex),
-                                                      onTrimLeftDx: (dx) {
-                                                        final c = ref
-                                                            .read(
-                                                                editorProvider)
-                                                            .clips[i];
-                                                        ref
-                                                            .read(
-                                                                editorProvider
-                                                                    .notifier)
-                                                            .setTrim(c.id,
-                                                                inPoint: c
-                                                                        .inPoint +
-                                                                    dx / px);
-                                                      },
-                                                      onTrimRightDx: (dx) {
-                                                        final c = ref
-                                                            .read(
-                                                                editorProvider)
-                                                            .clips[i];
-                                                        ref
-                                                            .read(
-                                                                editorProvider
-                                                                    .notifier)
-                                                            .setTrim(c.id,
-                                                                outPoint: c
-                                                                        .outPoint +
-                                                                    dx / px);
-                                                      },
+                                                      onTrimLeftDx: (dx) =>
+                                                          _onVideoTrimLeft(
+                                                              ref,
+                                                              state.clips,
+                                                              starts,
+                                                              audioClips,
+                                                              videoOverlays,
+                                                              i,
+                                                              px,
+                                                              dx),
+                                                      onTrimRightDx: (dx) =>
+                                                          _onVideoTrimRight(
+                                                              ref,
+                                                              state.clips,
+                                                              starts,
+                                                              audioClips,
+                                                              videoOverlays,
+                                                              i,
+                                                              px,
+                                                              dx),
                                                     ),
                                                   ),
                                                 // Transition markers, one
@@ -549,6 +587,10 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                                         overlay:
                                                             videoOverlays[i],
                                                         index: i,
+                                                        clips: state.clips,
+                                                        starts: starts,
+                                                        audioClips: audioClips,
+                                                        overlays: videoOverlays,
                                                         px: px,
                                                         selected:
                                                             videoOverlays[i]
@@ -602,6 +644,10 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                                       child: _AudioClipSlot(
                                                         clip: audioClips[i],
                                                         index: i,
+                                                        clips: state.clips,
+                                                        starts: starts,
+                                                        audioClips: audioClips,
+                                                        overlays: videoOverlays,
                                                         px: px,
                                                         selected: audioClips[i]
                                                                 .id ==
@@ -618,6 +664,12 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                   ),
                                 ],
                               ),
+                              // Snap indicator: a thin line at whatever
+                              // target the active drag/trim is currently
+                              // magnetized to. Isolated into its own
+                              // snap-watching widget (see [_SnapLine]), same
+                              // reasoning as [_Playhead] just below.
+                              _SnapLine(px: px),
                               // Playhead: spans the ruler and every lane
                               // beneath it, with a small grab handle sitting
                               // over the ruler. Isolated into its own
@@ -782,6 +834,91 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
 
   Widget _hdrIcon(IconData icon) =>
       Icon(icon, size: 15, color: Colors.white.withValues(alpha: 0.5));
+
+  /// Handles a drag of video clip [index]'s left trim handle (see
+  /// `_ClipSlot.onTrimLeftDx`): converts the raw pixel delta to a proposed
+  /// `inPoint`, by way of the resulting timeline-seconds duration — which
+  /// keeps the conversion speed-aware (`duration = (out-in)/speed`, the same
+  /// relationship `Clip.duration`/`Editor.splitSelectedAt` use) rather than
+  /// treating a screen-pixel delta as a source-seconds delta directly. Snaps
+  /// that duration via [_snapVideoTrimDuration] before committing.
+  void _onVideoTrimLeft(
+    WidgetRef ref,
+    List<model.Clip> clips,
+    List<double> starts,
+    List<AudioClip> audioClips,
+    List<VideoOverlay> overlays,
+    int index,
+    double px,
+    double dx,
+  ) {
+    final c = clips[index];
+    final rawIn = c.inPoint + dx / px;
+    final rawDuration = (c.outPoint - rawIn).clamp(0.0, c.sourceDuration) / c.speed;
+    final duration = _snapVideoTrimDuration(
+        ref, clips, starts, audioClips, overlays, index, px, rawDuration);
+    final newIn = c.outPoint - duration * c.speed;
+    ref.read(editorProvider.notifier).setTrim(c.id, inPoint: newIn);
+  }
+
+  /// Handles a drag of video clip [index]'s right trim handle (see
+  /// `_ClipSlot.onTrimRightDx`) — the mirror of [_onVideoTrimLeft] for the
+  /// `outPoint` edge.
+  void _onVideoTrimRight(
+    WidgetRef ref,
+    List<model.Clip> clips,
+    List<double> starts,
+    List<AudioClip> audioClips,
+    List<VideoOverlay> overlays,
+    int index,
+    double px,
+    double dx,
+  ) {
+    final c = clips[index];
+    final rawOut = c.outPoint + dx / px;
+    final rawDuration = (rawOut - c.inPoint).clamp(0.0, c.sourceDuration) / c.speed;
+    final duration = _snapVideoTrimDuration(
+        ref, clips, starts, audioClips, overlays, index, px, rawDuration);
+    final newOut = c.inPoint + duration * c.speed;
+    ref.read(editorProvider.notifier).setTrim(c.id, outPoint: newOut);
+  }
+
+  /// Shared snapping step for both video trim handles: given [rawDuration]
+  /// (the timeline-seconds duration the raw, unsnapped drag implies), snaps
+  /// the clip's right edge — `starts[index] + duration`, the only edge of
+  /// this clip that visually moves under either handle, since its left edge
+  /// is pinned by the running-sum layout (see docs/TIMELINE-BEHAVIOR.md §4)
+  /// — to the nearest target within the snap threshold, and returns the
+  /// (possibly adjusted) duration. Updates [snapIndicatorProvider] to match.
+  /// Returns [rawDuration] unchanged, and clears the indicator, when snapping
+  /// is off or nothing is in range.
+  double _snapVideoTrimDuration(
+    WidgetRef ref,
+    List<model.Clip> clips,
+    List<double> starts,
+    List<AudioClip> audioClips,
+    List<VideoOverlay> overlays,
+    int index,
+    double px,
+    double rawDuration,
+  ) {
+    if (!ref.read(snapEnabledProvider)) {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+      return rawDuration;
+    }
+    final targets = collectSnapTargets(
+      playhead: ref.read(playheadProvider),
+      clips: clips,
+      clipStarts: starts,
+      audioClips: audioClips,
+      overlays: overlays,
+      excludeClipId: clips[index].id,
+    );
+    final rawRightEdge = starts[index] + rawDuration;
+    final snapped = snapTime(rawRightEdge, targets, snapThresholdSeconds(px));
+    ref.read(snapIndicatorProvider.notifier).set(snapped);
+    return snapped == null ? rawDuration : snapped - starts[index];
+  }
 }
 
 /// The dark ruler strip: time labels (`00:00`, `00:03`, …) over a baseline of
@@ -888,6 +1025,39 @@ class _Playhead extends ConsumerWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The magnetic-snap indicator: a thin accent line spanning every lane,
+/// shown only while a drag/trim is actively snapped to a target (`0`, the
+/// playhead, or another item's edge — see `lib/ui/features/editor/
+/// timeline_snap.dart` and the [snapIndicatorProvider] it feeds). The ONLY
+/// widget watching that provider — same isolated, cheaply-repainting
+/// treatment as [_Playhead] — so a drag's per-frame snap updates never
+/// rebuild the rest of the timeline. [IgnorePointer]-wrapped so it never
+/// steals a lane's own gestures.
+class _SnapLine extends ConsumerWidget {
+  const _SnapLine({required this.px});
+
+  final double px;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final snappedAt = ref.watch(snapIndicatorProvider);
+    return IgnorePointer(
+      child: Stack(
+        children: [
+          if (snappedAt != null)
+            Positioned(
+              left: snappedAt * px,
+              top: 0,
+              bottom: 0,
+              child: Container(
+                  width: 1, color: AppColors.accent.withValues(alpha: 0.9)),
+            ),
         ],
       ),
     );
@@ -1220,12 +1390,14 @@ class _ClipBar extends ConsumerWidget {
 /// (a translation) while dragging; the reorder itself commits once on
 /// release, based on where the bar's centre ends up relative to its
 /// neighbours' centres.
-class _ClipSlot extends StatefulWidget {
+class _ClipSlot extends ConsumerStatefulWidget {
   const _ClipSlot({
     required this.clip,
     required this.index,
     required this.clips,
     required this.starts,
+    required this.audioClips,
+    required this.overlays,
     required this.px,
     required this.selected,
     required this.onTap,
@@ -1238,6 +1410,13 @@ class _ClipSlot extends StatefulWidget {
   final int index;
   final List<model.Clip> clips;
   final List<double> starts;
+
+  /// The audio lane and overlay lane, so a move-drag can also snap to their
+  /// clips'/overlays' edges (cross-lane snapping — see
+  /// docs/TIMELINE-BEHAVIOR.md §7).
+  final List<AudioClip> audioClips;
+  final List<VideoOverlay> overlays;
+
   final double px;
   final bool selected;
   final VoidCallback onTap;
@@ -1253,13 +1432,50 @@ class _ClipSlot extends StatefulWidget {
   static const _handleWidth = 8.0;
 
   @override
-  State<_ClipSlot> createState() => _ClipSlotState();
+  ConsumerState<_ClipSlot> createState() => _ClipSlotState();
 }
 
-class _ClipSlotState extends State<_ClipSlot> {
+class _ClipSlotState extends ConsumerState<_ClipSlot> {
   double _dragDx = 0;
 
+  /// Live-preview drag update: magnetizes [_dragDx] to the nearest snap
+  /// target (tested on both of the clip's edges — see [snapMove]) when
+  /// snapping is on, otherwise just accumulates the raw pixel delta. Updates
+  /// [snapIndicatorProvider] to match so [_SnapLine] shows/hides live.
+  void _onDragUpdate(DragUpdateDetails d) {
+    final rawDx = _dragDx + d.delta.dx;
+    if (!ref.read(snapEnabledProvider)) {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+      setState(() => _dragDx = rawDx);
+      return;
+    }
+    final targets = collectSnapTargets(
+      playhead: ref.read(playheadProvider),
+      clips: widget.clips,
+      clipStarts: widget.starts,
+      audioClips: widget.audioClips,
+      overlays: widget.overlays,
+      excludeClipId: widget.clip.id,
+    );
+    final candidateStart = widget.starts[widget.index] + rawDx / widget.px;
+    final snap = snapMove(
+      start: candidateStart,
+      duration: widget.clip.duration,
+      targets: targets,
+      thresholdSeconds: snapThresholdSeconds(widget.px),
+    );
+    if (snap == null) {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+      setState(() => _dragDx = rawDx);
+      return;
+    }
+    ref.read(snapIndicatorProvider.notifier).set(snap.lineAt);
+    setState(() =>
+        _dragDx = (snap.start - widget.starts[widget.index]) * widget.px);
+  }
+
   void _commitReorder() {
+    ref.read(snapIndicatorProvider.notifier).set(null);
     final shift = _dragDx;
     setState(() => _dragDx = 0);
     if (shift.abs() < 1) return; // negligible movement — treat as a tap
@@ -1277,6 +1493,11 @@ class _ClipSlotState extends State<_ClipSlot> {
     if (newIndex != widget.index) widget.onReorder(newIndex);
   }
 
+  void _cancelDrag() {
+    ref.read(snapIndicatorProvider.notifier).set(null);
+    setState(() => _dragDx = 0);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -1291,9 +1512,9 @@ class _ClipSlotState extends State<_ClipSlot> {
             child: _ClipDragArea(
               onTap: widget.onTap,
               onDragStart: (_) => setState(() => _dragDx = 0),
-              onDragUpdate: (d) => setState(() => _dragDx += d.delta.dx),
+              onDragUpdate: _onDragUpdate,
               onDragEnd: (_) => _commitReorder(),
-              onDragCancel: () => setState(() => _dragDx = 0),
+              onDragCancel: _cancelDrag,
               child: _ClipBar(
                 clip: widget.clip,
                 widthPx: widget.clip.duration * widget.px,
@@ -1329,12 +1550,26 @@ class _AudioClipSlot extends ConsumerStatefulWidget {
   const _AudioClipSlot({
     required this.clip,
     required this.index,
+    required this.clips,
+    required this.starts,
+    required this.audioClips,
+    required this.overlays,
     required this.px,
     required this.selected,
   });
 
   final AudioClip clip;
   final int index;
+
+  /// The video track and overlay lane, so this clip's move/trim can also
+  /// snap to their edges (cross-lane snapping — docs/TIMELINE-BEHAVIOR.md
+  /// §7). [audioClips] is the whole audio lane (including this clip itself,
+  /// which snapping excludes by id).
+  final List<model.Clip> clips;
+  final List<double> starts;
+  final List<AudioClip> audioClips;
+  final List<VideoOverlay> overlays;
+
   final double px;
   final bool selected;
 
@@ -1353,13 +1588,54 @@ class _AudioClipSlotState extends ConsumerState<_AudioClipSlot> {
   void _select() =>
       ref.read(selectedAudioClipProvider.notifier).set(widget.clip.id);
 
+  List<double> _snapTargets({String? excludeAudioClipId}) =>
+      collectSnapTargets(
+        playhead: ref.read(playheadProvider),
+        clips: widget.clips,
+        clipStarts: widget.starts,
+        audioClips: widget.audioClips,
+        overlays: widget.overlays,
+        excludeAudioClipId: excludeAudioClipId,
+      );
+
+  /// Live-preview drag update: magnetizes [_dragDx] to the nearest snap
+  /// target (tested on both of the clip's edges) when snapping is on,
+  /// otherwise just accumulates the raw pixel delta.
+  void _onDragUpdate(DragUpdateDetails d) {
+    final rawDx = _dragDx + d.delta.dx;
+    if (!ref.read(snapEnabledProvider)) {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+      setState(() => _dragDx = rawDx);
+      return;
+    }
+    final snap = snapMove(
+      start: widget.clip.start + rawDx / widget.px,
+      duration: widget.clip.duration,
+      targets: _snapTargets(excludeAudioClipId: widget.clip.id),
+      thresholdSeconds: snapThresholdSeconds(widget.px),
+    );
+    if (snap == null) {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+      setState(() => _dragDx = rawDx);
+      return;
+    }
+    ref.read(snapIndicatorProvider.notifier).set(snap.lineAt);
+    setState(() => _dragDx = (snap.start - widget.clip.start) * widget.px);
+  }
+
   void _commitMove() {
+    ref.read(snapIndicatorProvider.notifier).set(null);
     final shift = _dragDx;
     setState(() => _dragDx = 0);
     if (shift.abs() < 1) return; // negligible movement — treat as a tap
     final newStart =
         (widget.clip.start + shift / widget.px).clamp(0.0, double.infinity);
     _notifier.update(widget.index, widget.clip.copyWith(start: newStart));
+  }
+
+  void _cancelDrag() {
+    ref.read(snapIndicatorProvider.notifier).set(null);
+    setState(() => _dragDx = 0);
   }
 
   void _trimLeft(double dx) {
@@ -1369,12 +1645,29 @@ class _AudioClipSlotState extends ConsumerState<_AudioClipSlot> {
     if (c.outPoint - newIn < _AudioClipSlot._minLength) {
       newIn = (c.outPoint - _AudioClipSlot._minLength).clamp(0.0, c.sourceDuration);
     }
-    final actualDelta = newIn - c.inPoint;
-    _notifier.update(
-        widget.index,
-        c.copyWith(
-            inPoint: newIn,
-            start: (c.start + actualDelta).clamp(0.0, double.infinity)));
+    var actualDelta = newIn - c.inPoint;
+    var newStart = (c.start + actualDelta).clamp(0.0, double.infinity);
+
+    if (ref.read(snapEnabledProvider)) {
+      final snapped = snapTime(newStart,
+          _snapTargets(excludeAudioClipId: c.id), snapThresholdSeconds(widget.px));
+      ref.read(snapIndicatorProvider.notifier).set(snapped);
+      if (snapped != null) {
+        final candidateStart = snapped.clamp(0.0, double.infinity);
+        final candidateDelta = candidateStart - c.start;
+        final candidateIn =
+            (c.inPoint + candidateDelta).clamp(0.0, c.sourceDuration);
+        if (c.outPoint - candidateIn >= _AudioClipSlot._minLength) {
+          newIn = candidateIn;
+          actualDelta = candidateDelta;
+          newStart = candidateStart;
+        }
+      }
+    } else {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+    }
+
+    _notifier.update(widget.index, c.copyWith(inPoint: newIn, start: newStart));
   }
 
   void _trimRight(double dx) {
@@ -1384,6 +1677,23 @@ class _AudioClipSlotState extends ConsumerState<_AudioClipSlot> {
     if (newOut - c.inPoint < _AudioClipSlot._minLength) {
       newOut = (c.inPoint + _AudioClipSlot._minLength).clamp(0.0, c.sourceDuration);
     }
+
+    if (ref.read(snapEnabledProvider)) {
+      final rawEnd = c.start + (newOut - c.inPoint);
+      final snapped = snapTime(rawEnd,
+          _snapTargets(excludeAudioClipId: c.id), snapThresholdSeconds(widget.px));
+      ref.read(snapIndicatorProvider.notifier).set(snapped);
+      if (snapped != null) {
+        final candidateOut =
+            (c.inPoint + (snapped - c.start)).clamp(0.0, c.sourceDuration);
+        if (candidateOut - c.inPoint >= _AudioClipSlot._minLength) {
+          newOut = candidateOut;
+        }
+      }
+    } else {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+    }
+
     _notifier.update(widget.index, c.copyWith(outPoint: newOut));
   }
 
@@ -1404,9 +1714,9 @@ class _AudioClipSlotState extends ConsumerState<_AudioClipSlot> {
             child: _ClipDragArea(
               onTap: _select,
               onDragStart: (_) => setState(() => _dragDx = 0),
-              onDragUpdate: (d) => setState(() => _dragDx += d.delta.dx),
+              onDragUpdate: _onDragUpdate,
               onDragEnd: (_) => _commitMove(),
-              onDragCancel: () => setState(() => _dragDx = 0),
+              onDragCancel: _cancelDrag,
               child: _AudioClipBar(
                 clip: widget.clip,
                 widthPx: widget.clip.duration * widget.px,
@@ -1535,12 +1845,26 @@ class _VideoOverlaySlot extends ConsumerStatefulWidget {
   const _VideoOverlaySlot({
     required this.overlay,
     required this.index,
+    required this.clips,
+    required this.starts,
+    required this.audioClips,
+    required this.overlays,
     required this.px,
     required this.selected,
   });
 
   final VideoOverlay overlay;
   final int index;
+
+  /// The video track and audio lane, so this overlay's move/trim can also
+  /// snap to their edges (cross-lane snapping — docs/TIMELINE-BEHAVIOR.md
+  /// §7). [overlays] is the whole overlay lane (including this overlay
+  /// itself, which snapping excludes by id).
+  final List<model.Clip> clips;
+  final List<double> starts;
+  final List<AudioClip> audioClips;
+  final List<VideoOverlay> overlays;
+
   final double px;
   final bool selected;
 
@@ -1559,7 +1883,43 @@ class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
   void _select() =>
       ref.read(selectedVideoOverlayProvider.notifier).set(widget.overlay.id);
 
+  List<double> _snapTargets({String? excludeOverlayId}) => collectSnapTargets(
+        playhead: ref.read(playheadProvider),
+        clips: widget.clips,
+        clipStarts: widget.starts,
+        audioClips: widget.audioClips,
+        overlays: widget.overlays,
+        excludeOverlayId: excludeOverlayId,
+      );
+
+  /// Live-preview drag update: magnetizes [_dragDx] to the nearest snap
+  /// target (tested on both of the overlay's edges) when snapping is on,
+  /// otherwise just accumulates the raw pixel delta.
+  void _onDragUpdate(DragUpdateDetails d) {
+    final rawDx = _dragDx + d.delta.dx;
+    if (!ref.read(snapEnabledProvider)) {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+      setState(() => _dragDx = rawDx);
+      return;
+    }
+    final snap = snapMove(
+      start: widget.overlay.startTime + rawDx / widget.px,
+      duration: widget.overlay.duration,
+      targets: _snapTargets(excludeOverlayId: widget.overlay.id),
+      thresholdSeconds: snapThresholdSeconds(widget.px),
+    );
+    if (snap == null) {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+      setState(() => _dragDx = rawDx);
+      return;
+    }
+    ref.read(snapIndicatorProvider.notifier).set(snap.lineAt);
+    setState(
+        () => _dragDx = (snap.start - widget.overlay.startTime) * widget.px);
+  }
+
   void _commitMove() {
+    ref.read(snapIndicatorProvider.notifier).set(null);
     final shift = _dragDx;
     setState(() => _dragDx = 0);
     if (shift.abs() < 1) return; // negligible movement — treat as a tap
@@ -1567,6 +1927,11 @@ class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
         .clamp(0.0, double.infinity);
     _notifier.update(
         widget.index, widget.overlay.copyWith(startTime: newStart));
+  }
+
+  void _cancelDrag() {
+    ref.read(snapIndicatorProvider.notifier).set(null);
+    setState(() => _dragDx = 0);
   }
 
   void _trimLeft(double dx) {
@@ -1577,13 +1942,30 @@ class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
       newIn = (o.outPoint - _VideoOverlaySlot._minLength)
           .clamp(0.0, o.sourceDuration);
     }
-    final actualDelta = newIn - o.inPoint;
+    var actualDelta = newIn - o.inPoint;
+    var newStart = (o.startTime + actualDelta).clamp(0.0, double.infinity);
+
+    if (ref.read(snapEnabledProvider)) {
+      final snapped = snapTime(newStart,
+          _snapTargets(excludeOverlayId: o.id), snapThresholdSeconds(widget.px));
+      ref.read(snapIndicatorProvider.notifier).set(snapped);
+      if (snapped != null) {
+        final candidateStart = snapped.clamp(0.0, double.infinity);
+        final candidateDelta = candidateStart - o.startTime;
+        final candidateIn =
+            (o.inPoint + candidateDelta).clamp(0.0, o.sourceDuration);
+        if (o.outPoint - candidateIn >= _VideoOverlaySlot._minLength) {
+          newIn = candidateIn;
+          actualDelta = candidateDelta;
+          newStart = candidateStart;
+        }
+      }
+    } else {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+    }
+
     _notifier.update(
-        widget.index,
-        o.copyWith(
-            inPoint: newIn,
-            startTime:
-                (o.startTime + actualDelta).clamp(0.0, double.infinity)));
+        widget.index, o.copyWith(inPoint: newIn, startTime: newStart));
   }
 
   void _trimRight(double dx) {
@@ -1594,6 +1976,23 @@ class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
       newOut = (o.inPoint + _VideoOverlaySlot._minLength)
           .clamp(0.0, o.sourceDuration);
     }
+
+    if (ref.read(snapEnabledProvider)) {
+      final rawEnd = o.startTime + (newOut - o.inPoint);
+      final snapped = snapTime(rawEnd,
+          _snapTargets(excludeOverlayId: o.id), snapThresholdSeconds(widget.px));
+      ref.read(snapIndicatorProvider.notifier).set(snapped);
+      if (snapped != null) {
+        final candidateOut =
+            (o.inPoint + (snapped - o.startTime)).clamp(0.0, o.sourceDuration);
+        if (candidateOut - o.inPoint >= _VideoOverlaySlot._minLength) {
+          newOut = candidateOut;
+        }
+      }
+    } else {
+      ref.read(snapIndicatorProvider.notifier).set(null);
+    }
+
     _notifier.update(widget.index, o.copyWith(outPoint: newOut));
   }
 
@@ -1614,9 +2013,9 @@ class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
             child: _ClipDragArea(
               onTap: _select,
               onDragStart: (_) => setState(() => _dragDx = 0),
-              onDragUpdate: (d) => setState(() => _dragDx += d.delta.dx),
+              onDragUpdate: _onDragUpdate,
               onDragEnd: (_) => _commitMove(),
-              onDragCancel: () => setState(() => _dragDx = 0),
+              onDragCancel: _cancelDrag,
               child: _VideoOverlayBar(
                 overlay: widget.overlay,
                 widthPx: widget.overlay.duration * widget.px,

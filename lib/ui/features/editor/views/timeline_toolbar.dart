@@ -24,6 +24,7 @@ class TimelineToolbar extends ConsumerWidget {
     final canUndo = editor.canUndo;
     final canRedo = editor.canRedo;
     final zoom = ref.watch(timelineZoomProvider);
+    final snapEnabled = ref.watch(snapEnabledProvider);
 
     return Container(
       height: 40,
@@ -59,6 +60,13 @@ class TimelineToolbar extends ConsumerWidget {
           const Spacer(),
           _tool(context, Icons.mic_none, 'Record voiceover'),
           _tool(context, Icons.link, 'Link'),
+          _divider(),
+          VIconButton(
+            icon: Icons.align_horizontal_center,
+            tooltip: snapEnabled ? 'Snap to clips/playhead (on) · N' : 'Snap to clips/playhead (off) · N',
+            active: snapEnabled,
+            onPressed: ref.read(snapEnabledProvider.notifier).toggle,
+          ),
           _divider(),
           _tool(context, Icons.zoom_out, 'Zoom out',
               onTap: ref.read(timelineZoomProvider.notifier).zoomOut),

@@ -76,6 +76,45 @@ class TimelineZoom extends _$TimelineZoom {
   void zoomOut() => set(state / 1.3);
 }
 
+/// Whether dragging/trimming a clip magnetizes to nearby snap targets (`0`,
+/// the playhead, other clips'/audio-clips'/overlays' edges — see
+/// `lib/ui/features/editor/timeline_snap.dart`). Defaults on, matching both
+/// CapCut-style reference editors (docs/TIMELINE-BEHAVIOR.md §7). Toggled by
+/// the timeline toolbar's snap button and the `n` keyboard shortcut.
+@Riverpod(keepAlive: true)
+class SnapEnabled extends _$SnapEnabled {
+  @override
+  bool build() => true;
+  void set(bool value) => state = value;
+  void toggle() => state = !state;
+}
+
+/// The timeline position (timeline seconds) the active drag/trim is currently
+/// snapped to, or null when nothing is snapped. Written by the per-clip
+/// move/trim handlers in `timeline_panel.dart` while a gesture is in
+/// progress; read only by the isolated snap-line widget there, the same
+/// "watch just this, not the whole timeline" treatment `Playhead`/`_Playhead`
+/// get — so the magnetic line can appear/disappear every drag frame without
+/// rebuilding every clip bar, filmstrip and waveform.
+@Riverpod(keepAlive: true)
+class SnapIndicator extends _$SnapIndicator {
+  @override
+  double? build() => null;
+  void set(double? timelineSeconds) => state = timelineSeconds;
+}
+
+/// Whether the preview is currently playing. Written by [PlayerPanel] from
+/// its media_kit player's `playing` stream; read by the timeline to drive
+/// auto-scroll-follow during playback (keeping the playhead on-screen — see
+/// `_TimelinePanelState._followPlayhead` in `timeline_panel.dart`) without
+/// the timeline needing any direct reference to the player.
+@Riverpod(keepAlive: true)
+class IsPlaying extends _$IsPlaying {
+  @override
+  bool build() => false;
+  void set(bool value) => state = value;
+}
+
 /// The draggable panel sizes: left browser width, right inspector width, and
 /// timeline height (all in logical pixels).
 class PanelSizes {

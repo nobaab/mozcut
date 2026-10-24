@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/player_control.dart';
 
@@ -98,6 +99,44 @@ class _EditorShortcutsState extends ConsumerState<EditorShortcuts> {
       const SingleActivator(LogicalKeyboardKey.arrowRight): () => ref
           .read(playerControlProvider.notifier)
           .seekBy(EditorShortcuts.nudgeSeconds),
+      // Shift+arrow seeks a full second rather than a frame — bound
+      // separately from the plain arrow bindings above (SingleActivator's
+      // `shift: false` default means those only match with Shift released,
+      // so there's no ambiguity between the two).
+      const SingleActivator(LogicalKeyboardKey.arrowLeft, shift: true): () =>
+          ref.read(playerControlProvider.notifier).seekBy(-1.0),
+      const SingleActivator(LogicalKeyboardKey.arrowRight, shift: true): () =>
+          ref.read(playerControlProvider.notifier).seekBy(1.0),
+      // Zoom. Bound on both the plain "=" key (Ctrl/Cmd+=, no shift) and its
+      // shifted "+" counterpart — on a US keyboard, Shift+Equal is reported
+      // as LogicalKeyboardKey.add (a distinct logical key, not `equal` with a
+      // shift flag), so both must be registered to cover "Ctrl/Cmd + = (and
+      // +)" from the spec.
+      const SingleActivator(LogicalKeyboardKey.equal, meta: true): () =>
+          ref.read(timelineZoomProvider.notifier).zoomIn(),
+      const SingleActivator(LogicalKeyboardKey.equal, control: true): () =>
+          ref.read(timelineZoomProvider.notifier).zoomIn(),
+      const SingleActivator(LogicalKeyboardKey.add, meta: true, shift: true):
+          () => ref.read(timelineZoomProvider.notifier).zoomIn(),
+      const SingleActivator(LogicalKeyboardKey.add,
+          control: true, shift: true): () =>
+          ref.read(timelineZoomProvider.notifier).zoomIn(),
+      const SingleActivator(LogicalKeyboardKey.minus, meta: true): () =>
+          ref.read(timelineZoomProvider.notifier).zoomOut(),
+      const SingleActivator(LogicalKeyboardKey.minus, control: true): () =>
+          ref.read(timelineZoomProvider.notifier).zoomOut(),
+      // Duplicate the selected clip.
+      const SingleActivator(LogicalKeyboardKey.keyD, meta: true): () =>
+          ref.read(editorProvider.notifier).duplicateSelected(),
+      const SingleActivator(LogicalKeyboardKey.keyD, control: true): () =>
+          ref.read(editorProvider.notifier).duplicateSelected(),
+      // Ripple-delete — bound only with Shift held, so it never collides
+      // with the plain Delete binding above.
+      const SingleActivator(LogicalKeyboardKey.delete, shift: true): () =>
+          ref.read(editorProvider.notifier).rippleDeleteSelected(),
+      // Toggle timeline snapping.
+      const SingleActivator(LogicalKeyboardKey.keyN): () =>
+          ref.read(snapEnabledProvider.notifier).toggle(),
     };
   }
 
@@ -138,16 +177,22 @@ void showEditorShortcutsDialog(BuildContext context) {
     builder: (context) => AlertDialog(
       title: const Text('Keyboard shortcuts'),
       content: const SizedBox(
-        width: 340,
+        width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             _ShortcutRow('Space', 'Play / pause'),
             _ShortcutRow('⌘/Ctrl + B, or S', 'Split clip at playhead'),
             _ShortcutRow('Delete / Backspace', 'Remove selected clip'),
+            _ShortcutRow('Shift + Delete', 'Ripple-delete selected clip'),
+            _ShortcutRow('⌘/Ctrl + D', 'Duplicate selected clip'),
             _ShortcutRow('⌘/Ctrl + Z', 'Undo'),
             _ShortcutRow('⌘/Ctrl + Shift + Z, or Ctrl/⌘ + Y', 'Redo'),
-            _ShortcutRow('← / →', 'Nudge playhead'),
+            _ShortcutRow('← / →', 'Nudge playhead 1 frame'),
+            _ShortcutRow('Shift + ← / →', 'Seek 1 second'),
+            _ShortcutRow('⌘/Ctrl + = (or +)', 'Zoom timeline in'),
+            _ShortcutRow('⌘/Ctrl + -', 'Zoom timeline out'),
+            _ShortcutRow('N', 'Toggle snapping'),
           ],
         ),
       ),

@@ -5,6 +5,7 @@ import '../../../../domain/models/caption.dart';
 import '../../../../domain/models/clip.dart';
 import '../../../../domain/models/keyframe.dart';
 import '../../../../domain/models/media_type.dart';
+import '../../launcher/view_models/launcher_view_model.dart';
 
 part 'editor_view_model.g.dart';
 
@@ -162,9 +163,16 @@ class Editor extends _$Editor {
     });
   }
 
+  /// The shortest a clip may be trimmed to: one frame at the project's fps
+  /// (falling back to 30fps if no project is open / fps is otherwise
+  /// unknown), matching both reference editors (`1/fps` in rea-capcut,
+  /// `1/60s` in concat) rather than an arbitrary fixed duration.
+  double get _minClipLength => 1.0 / (ref.read(appProvider)?.video.fps ?? 30);
+
   /// Sets the trim in/out of the clip with [id] (source seconds), clamped to
-  /// the source and to a minimum clip length of 0.1s. Used by the timeline's
-  /// trim handles, which drag one edge at a time.
+  /// the source and to a minimum clip length of one frame (see
+  /// [_minClipLength]). Used by the timeline's trim handles, which drag one
+  /// edge at a time.
   void setTrim(String id, {double? inPoint, double? outPoint}) {
     final idx = state.clips.indexWhere((c) => c.id == id);
     if (idx < 0) return;
@@ -173,7 +181,7 @@ class Editor extends _$Editor {
       final c = clips[idx];
       var newIn = (inPoint ?? c.inPoint).clamp(0.0, c.sourceDuration);
       var newOut = (outPoint ?? c.outPoint).clamp(0.0, c.sourceDuration);
-      const minLength = 0.1;
+      final minLength = _minClipLength;
       if (newOut - newIn < minLength) {
         if (inPoint != null) {
           // Dragging the left handle: don't let it pass the right edge.
@@ -199,6 +207,46 @@ class Editor extends _$Editor {
       );
     });
   }
+
+  /// Deep-copies [c] into a distinct [Clip] with a *fresh* `id` — unlike
+  /// [_cloneClip] (used for undo snapshots, which must keep the same id so
+  /// [EditorState.selectedId] still resolves after a restore), a duplicate on
+  /// the timeline needs its own identity. Round-trips through
+  /// [Clip.toJson]/[Clip.fromJson] (dropping the `id` key so the constructor
+  /// mints a new one) rather than hand-copying every field, so a future field
+  /// added to [Clip] is automatically carried over here too.
+  Clip _duplicateClip(Clip c) => Clip.fromJson(c.toJson()..remove('id'));
+
+  /// Inserts a copy of the selected clip immediately after it (`Ctrl/Cmd+D`),
+  /// selecting the new copy. The duplicate carries every edit — trim,
+  /// transform, speed, filters, keyframes, captions — so it plays identically
+  /// to the original until independently edited. Since the single video
+  /// track is a contiguous running sum of durations (see `timeline_panel
+  /// .dart`'s `starts`), inserting right after the original automatically
+  /// pushes every later clip right by the duplicate's length — no separate
+  /// "ripple" step needed. No-op if nothing is selected.
+  void duplicateSelected() {
+    final idx = state.selectedIndex;
+    if (idx < 0) return;
+    _mutate((s) {
+      final copy = _duplicateClip(s.clips[idx]);
+      final clips = [...s.clips]..insert(idx + 1, copy);
+      return s.copyWith(clips: clips, selectedId: copy.id);
+    });
+  }
+
+  /// Removes the selected clip, same as [removeSelected] but under a
+  /// distinct name/shortcut (`Shift+Delete`) for CapCut's "ripple delete"
+  /// affordance. On MozCut's single video track every clip already abuts the
+  /// next (there is never a gap to close — the running-sum layout in
+  /// `timeline_panel.dart` guarantees it), so removing the selected clip
+  /// *is* the ripple: everything after it slides left to meet whatever is
+  /// now before it, with no separate gap-closing step required. Kept as its
+  /// own method (rather than just binding the shortcut to [removeSelected])
+  /// so the distinction is visible in the keyboard-shortcut bindings and so
+  /// a future multi-track model has an obvious place to add real gap-closing
+  /// logic without touching the plain-delete behaviour.
+  void rippleDeleteSelected() => removeSelected();
 
   /// Sets the trim in/out of the selected clip. Points are source seconds.
   void trimSelected({double? inPoint, double? outPoint}) {

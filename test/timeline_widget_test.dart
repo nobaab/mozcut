@@ -9,6 +9,7 @@ import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
 import 'package:mozcut/domain/models/video_overlay.dart';
+import 'package:mozcut/ui/features/editor/view_models/audio_clips_view_model.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_ui_state.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
 import 'package:mozcut/ui/features/editor/view_models/text_overlays_view_model.dart';
@@ -290,6 +291,133 @@ void main() {
     expect(reset.posY, 0.0);
     expect(reset.rotation, 0.0);
     expect(reset.flipH, isFalse);
+  });
+
+  group('timeline snapping', () {
+    testWidgets(
+        'dragging an audio clip close to a video clip edge snaps to it',
+        (tester) async {
+      final container = ProviderContainer(
+        overrides: [engineProvider.overrideWithValue(FakeEngine())],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: Scaffold(body: TimelinePanel())),
+        ),
+      );
+
+      // 12s clip (FakeEngine.probeDuration) at the default 40px/s zoom ends
+      // at timeline second 12 (480px).
+      await container.read(editorProvider.notifier).addClip('/a/clip.mp4');
+      await container
+          .read(audioClipsProvider.notifier)
+          .addFromPath('/x.mp3', start: 5.0);
+      await tester.pumpAndSettle();
+      expect(container.read(audioClipsProvider).first.start, 5.0);
+      expect(container.read(snapIndicatorProvider), isNull);
+
+      // Drag it right, close to the video clip's end (12s @ 40px/s =
+      // 480px). `tester.drag` consumes some of the requested offset
+      // overcoming the gesture recognizer's touch slop before any of it
+      // reaches `onUpdate`, so the nominal offset is well past the target —
+      // comfortably landing the *actual* delivered candidate within the
+      // 8px/0.2s snap threshold either way.
+      await tester.drag(find.text('x.mp3'), const Offset(300, 0));
+      await tester.pump();
+
+      expect(container.read(audioClipsProvider).first.start, closeTo(12.0, 0.05));
+      // The indicator clears once the drag/gesture has ended.
+      expect(container.read(snapIndicatorProvider), isNull);
+    });
+
+    testWidgets('turning snapping off leaves the raw drag position alone',
+        (tester) async {
+      final container = ProviderContainer(
+        overrides: [engineProvider.overrideWithValue(FakeEngine())],
+      );
+      addTearDown(container.dispose);
+      container.read(snapEnabledProvider.notifier).set(false);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: Scaffold(body: TimelinePanel())),
+        ),
+      );
+
+      // 12s clip ends at timeline second 12 (480px @ 40px/s).
+      await container.read(editorProvider.notifier).addClip('/a/clip.mp4');
+      await container
+          .read(audioClipsProvider.notifier)
+          .addFromPath('/x.mp3', start: 2.0);
+      await tester.pumpAndSettle();
+
+      // A modest drag, clearly short of the 12.0s clip edge either way —
+      // with snapping off it should land roughly proportional to the drag,
+      // nowhere near that target.
+      await tester.drag(find.text('x.mp3'), const Offset(100, 0));
+      await tester.pump();
+
+      final start = container.read(audioClipsProvider).first.start;
+      expect(start, greaterThan(2.0));
+      expect(start, lessThan(10.0));
+    });
+  });
+
+  group('playback auto-scroll-follow', () {
+    Future<ScrollController> pumpWideTimeline(
+        WidgetTester tester, ProviderContainer container) async {
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: Scaffold(body: TimelinePanel())),
+        ),
+      );
+      // Lots of 12s clips (FakeEngine.probeDuration) so the timeline is well
+      // wider than the viewport and there's real room to scroll.
+      final editor = container.read(editorProvider.notifier);
+      for (var i = 0; i < 20; i++) {
+        await editor.addClip('/clip$i.mp4');
+      }
+      await tester.pumpAndSettle();
+      final scrollView =
+          tester.widget<SingleChildScrollView>(find.byType(SingleChildScrollView));
+      return scrollView.controller!;
+    }
+
+    testWidgets(
+        'nudges the scroll offset to follow the playhead while playing',
+        (tester) async {
+      final container = ProviderContainer(
+        overrides: [engineProvider.overrideWithValue(FakeEngine())],
+      );
+      addTearDown(container.dispose);
+      final controller = await pumpWideTimeline(tester, container);
+      expect(controller.offset, 0);
+
+      container.read(isPlayingProvider.notifier).set(true);
+      container.read(playheadProvider.notifier).set(200); // deep in the timeline
+      await tester.pump();
+
+      expect(controller.offset, greaterThan(0));
+    });
+
+    testWidgets('does not auto-scroll while not playing', (tester) async {
+      final container = ProviderContainer(
+        overrides: [engineProvider.overrideWithValue(FakeEngine())],
+      );
+      addTearDown(container.dispose);
+      final controller = await pumpWideTimeline(tester, container);
+
+      // isPlayingProvider stays at its default (false).
+      container.read(playheadProvider.notifier).set(200);
+      await tester.pump();
+
+      expect(controller.offset, 0);
+    });
   });
 
   group('zoomAnchoredScrollOffset', () {
