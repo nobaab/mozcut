@@ -4,13 +4,17 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../../data/engine/ffmpeg_engine.dart';
+import '../../../../domain/models/aspect_presets.dart';
+import '../../../../domain/models/project.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
+import '../../launcher/view_models/launcher_view_model.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/player_control.dart';
 import '../view_models/sticker_overlays_view_model.dart';
 import '../view_models/text_overlays_view_model.dart';
+import 'ratio_dialog.dart';
 
 /// The centre monitor, modelled on CapCut's Player: a "Player" header, the video
 /// in the middle, and a controls bar (timecode, play, fit, aspect, fullscreen).
@@ -71,6 +75,9 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     final selected = editorState.selected;
     final hasClips = editorState.clips.isNotEmpty;
     final previewBusy = ref.watch(previewRenderingProvider);
+    final canvas = ref.watch(appProvider)?.video ?? const VideoSettings();
+    final aspectRatio =
+        canvas.height > 0 ? canvas.width / canvas.height : 16 / 9;
 
     // Keyboard shortcuts (Space, Left/Right arrow) send commands here rather
     // than touching media_kit directly, since the Player lives in this
@@ -125,7 +132,18 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
                           style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.3))),
                     )
-                  : Video(controller: _controller, controls: NoVideoControls),
+                  // Letterbox/pillarbox to the project's canvas aspect ratio
+                  // (black bars fill the rest of this container) — this is
+                  // the same framing `export`/`renderPreview` produce, so the
+                  // Ratio control visibly reflows the preview the moment it
+                  // changes.
+                  : Center(
+                      child: AspectRatio(
+                        aspectRatio: aspectRatio,
+                        child: Video(
+                            controller: _controller, controls: NoVideoControls),
+                      ),
+                    ),
             ),
           ),
           _controls(),
@@ -143,13 +161,16 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     final textOverlays = ref.read(textOverlaysProvider);
     final stickerOverlays = ref.read(stickerOverlaysProvider);
     final engine = ref.read(engineProvider);
+    final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
 
     ref.read(previewRenderingProvider.notifier).set(true);
     try {
       final path = await engine.renderPreview(
           clips: clips,
           textOverlays: textOverlays,
-          stickerOverlays: stickerOverlays);
+          stickerOverlays: stickerOverlays,
+          canvasWidth: canvas.width,
+          canvasHeight: canvas.height);
       if (!mounted) return;
       _previewMode = true;
       _loadedPath = path;
@@ -228,7 +249,7 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
               ),
               const Spacer(),
               _ctl(Icons.fit_screen, 'Fit'),
-              _customChip(),
+              _ratioControl(),
               _ctl(Icons.fullscreen, 'Fullscreen'),
             ],
           ),
@@ -244,14 +265,37 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
             SnackBar(content: Text('$tip — coming soon'))),
       );
 
-  Widget _customChip() => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: VChip(
-          label: 'Custom',
-          onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Aspect ratio — coming soon'))),
-        ),
-      );
+  /// The Ratio control: shows the project's current ratio label and opens
+  /// [RatioDialog] on tap — presets, "Original" (probes the first clip via
+  /// the engine) and Custom W×H. Picking one calls `App.setCanvas`, which the
+  /// preview (letterboxed above) and a later export both pick up.
+  Widget _ratioControl() {
+    final project = ref.watch(appProvider);
+    final video = project?.video ?? const VideoSettings();
+    final label = ratioLabelFor(video.width, video.height);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: VChip(
+        icon: Icons.aspect_ratio,
+        label: label,
+        onTap: project == null ? null : () => _openRatioDialog(project.video),
+      ),
+    );
+  }
+
+  Future<void> _openRatioDialog(VideoSettings current) async {
+    final clips = ref.read(editorProvider).clips;
+    final engine = ref.read(engineProvider);
+    final firstClipPath = clips.isEmpty ? null : clips.first.sourcePath;
+    final result = await showRatioDialog(
+      context,
+      current: current,
+      probeOriginal:
+          firstClipPath == null ? null : () => engine.probeDimensions(firstClipPath),
+    );
+    if (result == null || !mounted) return;
+    ref.read(appProvider.notifier).setCanvas(result.width, result.height);
+  }
 
   /// HH:MM:SS:FF at 30 fps — CapCut's timecode shape.
   static String _tc(Duration d) {
