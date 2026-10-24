@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../data/upscale/upscale_service.dart';
 import '../../../../domain/models/clip.dart';
 import '../../../core/app_colors.dart';
+import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../../../core/widgets/fields.dart';
 import '../../../core/widgets/rows.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
+import '../view_models/upscale_view_model.dart';
 
 /// The inspector, modelled on CapCut: Video / Audio / Speed / Animation /
 /// Adjustment tabs, with the Video tab's Basic / Remove BG / Mask / Retouch
@@ -188,6 +191,8 @@ class _VideoTab extends ConsumerWidget {
                 OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
             onPressed: editor.removeSelected,
           ),
+          const SizedBox(height: 18),
+          const _AiUpscaleSection(),
         ] else
           _ComingSoon(label: sub.label),
       ],
@@ -366,6 +371,133 @@ class _VideoTab extends ConsumerWidget {
 
   static final _lbl =
       TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5));
+}
+
+/// A resolution the "AI Upscale" button can target. `width`/`height` feed
+/// [UpscaleService.upscale] directly.
+enum _UpscaleTarget {
+  hd1080(1920, 1080, '1080p'),
+  uhd4k(3840, 2160, '4K');
+
+  const _UpscaleTarget(this.width, this.height, this.label);
+  final int width;
+  final int height;
+  final String label;
+}
+
+/// The Video tab's "AI Upscale" section: runs local, on-device
+/// Real-ESRGAN upscaling on the selected clip's trimmed region (see
+/// `lib/data/upscale/upscale_service.dart`), with a target-resolution choice,
+/// a progress bar + Cancel while it runs, and a "Revert to original" action
+/// once the clip has been upscaled. Stateful only to hold the target choice —
+/// everything else is read straight from [upscaleProvider]/[editorProvider].
+class _AiUpscaleSection extends ConsumerStatefulWidget {
+  const _AiUpscaleSection();
+
+  @override
+  ConsumerState<_AiUpscaleSection> createState() => _AiUpscaleSectionState();
+}
+
+class _AiUpscaleSectionState extends ConsumerState<_AiUpscaleSection> {
+  _UpscaleTarget _target = _UpscaleTarget.hd1080;
+
+  Future<void> _run(Clip clip) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(upscaleProvider.notifier).run(
+            clip,
+            targetWidth: _target.width,
+            targetHeight: _target.height,
+          );
+      if (mounted) {
+        messenger
+          ..clearSnackBars()
+          ..showSnackBar(const SnackBar(
+              content: Text('AI upscale complete.')));
+      }
+    } catch (e) {
+      // Cancellation isn't an error — the user asked for it, so there is
+      // nothing to surface beyond the busy state already clearing.
+      if (e is UpscaleException && e.message == upscaleCancelledMessage) {
+        return;
+      }
+      if (mounted) {
+        messenger
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected));
+    final upscale = ref.watch(upscaleProvider);
+    if (clip == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const VSectionHeader('AI Upscale'),
+        if (upscale.isRunning) ...[
+          LinearProgressIndicator(
+              value: upscale.progress <= 0 ? null : upscale.progress),
+          const SizedBox(height: 8),
+          Text(
+            upscale.status ?? 'Upscaling…',
+            style:
+                TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.6)),
+          ),
+          const SizedBox(height: 10),
+          VButton(
+            label: 'Cancel',
+            icon: Icons.close,
+            expand: true,
+            onPressed: () => ref.read(upscaleProvider.notifier).cancel(),
+          ),
+        ] else ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final t in _UpscaleTarget.values)
+                VChip(
+                  label: t.label,
+                  selected: t == _target,
+                  onTap: () => setState(() => _target = t),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          VButton(
+            label: 'AI Upscale ✨',
+            icon: Icons.auto_awesome,
+            variant: VButtonVariant.primary,
+            expand: true,
+            onPressed: () => _run(clip),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Runs locally with Real-ESRGAN — no upload, no account.',
+              style:
+                  TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.4)),
+            ),
+          ),
+          if (clip.originalSourcePath != null) ...[
+            const SizedBox(height: 10),
+            VButton(
+              label: 'Revert to original',
+              icon: Icons.undo,
+              expand: true,
+              onPressed: () =>
+                  ref.read(editorProvider.notifier).revertUpscale(),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
 }
 
 /// The Speed tab: preset chips (0.5x/1x/2x/4x) plus a custom numeric field,

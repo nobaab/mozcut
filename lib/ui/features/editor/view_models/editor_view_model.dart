@@ -343,6 +343,48 @@ class Editor extends _$Editor {
         ));
   }
 
+  // ── AI upscale ──
+
+  /// Applies the result of an AI upscale ([UpscaleService.upscale]'s output)
+  /// to the selected clip: swaps its source to [upscaledPath] and resets the
+  /// trim to cover the new file in full (the upscaled file *is* exactly the
+  /// clip's previous trimmed region, re-encoded — see
+  /// `lib/data/upscale/upscale_service.dart`), then records the pre-upscale
+  /// source in [Clip.originalSourcePath] (unless one is already recorded,
+  /// so re-upscaling an already-upscaled clip doesn't lose the true
+  /// original) so [revertUpscale] can restore it later. Routed through
+  /// [_mapSelected] like every other clip edit, so it is undoable.
+  Future<void> applyUpscale(String upscaledPath) async {
+    final duration =
+        await ref.read(engineProvider).probeDuration(upscaledPath);
+    _mapSelected((c) => c.copyWith(
+          sourcePath: upscaledPath,
+          sourceDuration: duration,
+          inPoint: 0,
+          outPoint: duration,
+          originalSourcePath: c.originalSourcePath ?? c.sourcePath,
+        ));
+  }
+
+  /// Reverts the selected clip back to its pre-upscale source
+  /// ([Clip.originalSourcePath]), if it has one. The original file's trim
+  /// can't be perfectly restored once overwritten (unless undo history still
+  /// has it), so this resets to the original file in full rather than
+  /// guessing — a safety net, not a substitute for undo. No-op if the
+  /// selected clip was never upscaled.
+  Future<void> revertUpscale() async {
+    final original = state.selected?.originalSourcePath;
+    if (original == null) return;
+    final duration = await ref.read(engineProvider).probeDuration(original);
+    _mapSelected((c) => c.copyWith(
+          sourcePath: original,
+          sourceDuration: duration,
+          inPoint: 0,
+          outPoint: duration,
+          clearOriginalSourcePath: true,
+        ));
+  }
+
   void _mapSelected(Clip Function(Clip) f) {
     final idx = state.selectedIndex;
     if (idx < 0) return;

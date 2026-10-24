@@ -33,6 +33,7 @@ class Clip {
     this.effectId,
     this.transitionId,
     double? transitionDuration,
+    this.originalSourcePath,
   })  : id = id ?? _uuid.v4(),
         inPoint = inPoint ?? 0,
         outPoint = outPoint ?? sourceDuration,
@@ -153,6 +154,21 @@ class Clip {
   /// [transitionId] is non-null. Defaults to 0.5s.
   double transitionDuration;
 
+  // ── AI upscale ──
+  // See lib/data/upscale/upscale_service.dart. When an AI upscale is applied,
+  // [sourcePath]/[sourceDuration] are swapped to the upscaled file (with
+  // [inPoint]/[outPoint] reset to cover it in full) and the clip's
+  // pre-upscale source is recorded here so the user can revert. Null (the
+  // default) means this clip has never been upscaled — every clip created
+  // before this feature existed reproduces the exact same behaviour.
+
+  /// The clip's source file before an AI upscale was applied, or null if it
+  /// has never been upscaled. Only ever set once per upscale — a second
+  /// upscale on top of an already-upscaled clip still records the *original*
+  /// source, not the intermediate upscaled one, so "Revert to original"
+  /// always goes all the way back.
+  String? originalSourcePath;
+
   /// Length this clip contributes to the timeline, in seconds: the trimmed
   /// source region (clamped to source bounds) divided by [speed].
   double get duration =>
@@ -161,6 +177,8 @@ class Clip {
   String get fileName => sourcePath.split(RegExp(r'[/\\]')).last;
 
   Clip copyWith({
+    String? sourcePath,
+    double? sourceDuration,
     double? inPoint,
     double? outPoint,
     List<Caption>? captions,
@@ -183,11 +201,13 @@ class Clip {
     String? transitionId,
     bool clearTransitionId = false,
     double? transitionDuration,
+    String? originalSourcePath,
+    bool clearOriginalSourcePath = false,
   }) =>
       Clip(
         id: id,
-        sourcePath: sourcePath,
-        sourceDuration: sourceDuration,
+        sourcePath: sourcePath ?? this.sourcePath,
+        sourceDuration: sourceDuration ?? this.sourceDuration,
         inPoint: inPoint ?? this.inPoint,
         outPoint: outPoint ?? this.outPoint,
         captions: captions ?? this.captions,
@@ -209,6 +229,9 @@ class Clip {
             ? null
             : (transitionId ?? this.transitionId),
         transitionDuration: transitionDuration ?? this.transitionDuration,
+        originalSourcePath: clearOriginalSourcePath
+            ? null
+            : (originalSourcePath ?? this.originalSourcePath),
       );
 
   Map<String, dynamic> toJson() => {
@@ -234,6 +257,7 @@ class Clip {
         'effectId': effectId,
         'transitionId': transitionId,
         'transitionDuration': transitionDuration,
+        'originalSourcePath': originalSourcePath,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -263,5 +287,6 @@ class Clip {
         effectId: json['effectId'] as String?,
         transitionId: json['transitionId'] as String?,
         transitionDuration: (json['transitionDuration'] as num?)?.toDouble(),
+        originalSourcePath: json['originalSourcePath'] as String?,
       );
 }
