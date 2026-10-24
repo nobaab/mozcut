@@ -59,9 +59,10 @@ void main() {
     expect(clips[0].duration, closeTo(3, 0.001));
     expect(clips[1].duration, closeTo(3, 0.001));
 
-    // --- SPLIT clip A at 2.5s (into 1.5s + 1.5s) ---
+    // --- SPLIT clip A at its midpoint (timeline 1.5s) into 1.5s + 1.5s ---
+    // splitSelectedAt takes a timeline position; clip A occupies [0, 3].
     editor.select(clips[0].id);
-    editor.splitSelectedAt(2.5);
+    editor.splitSelectedAt(1.5);
     clips = container.read(editorProvider).clips;
     expect(clips.length, 3, reason: 'split added one clip');
     expect(clips[0].duration, closeTo(1.5, 0.001));

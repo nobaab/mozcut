@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,7 +9,11 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../../data/engine/ffmpeg_engine.dart';
 import '../../../../domain/models/aspect_presets.dart';
+import '../../../../domain/models/audio_clip.dart';
 import '../../../../domain/models/project.dart';
+import '../../../../domain/models/sticker_overlay.dart';
+import '../../../../domain/models/text_overlay.dart';
+import '../../../../domain/models/video_overlay.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
@@ -22,12 +29,16 @@ import 'ratio_dialog.dart';
 /// The centre monitor, modelled on CapCut's Player: a "Player" header, the video
 /// in the middle, and a controls bar (timecode, play, fit, aspect, fullscreen).
 ///
-/// By default this previews one clip at a time (the selected one's raw
-/// source) — cheap and instant while scrubbing/trimming. The "Render preview"
-/// button in the header renders the *whole* timeline (transforms, speed,
-/// volume, captions, text overlays — the same filtergraph `export` uses, just
-/// small/fast) via [Engine.renderPreview] and loads that proxy instead, so the
-/// player can show the real edit on demand.
+/// The preview is WYSIWYG: whenever the timeline changes (trims, reorders,
+/// transforms, speed, volume, overlays, audio clips, canvas ratio) it
+/// re-renders the *whole* timeline to a small/fast proxy via
+/// [Engine.renderPreview] — the SAME filtergraph `export` uses — and plays
+/// that. So the player reflects the real edit: trimmed regions stop where the
+/// trim says, the audio lane is audible, overlays show. Re-renders are
+/// debounced (so dragging a trim handle only renders once, on release) and
+/// coalesced (one render in flight at a time), and playback position/▶ state
+/// are preserved across a re-render. The header button forces an immediate
+/// re-render.
 class PlayerPanel extends ConsumerStatefulWidget {
   const PlayerPanel({super.key});
 
@@ -48,11 +59,19 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
   Duration _duration = Duration.zero;
   bool _playing = false;
 
-  // True once a timeline proxy (from [Engine.renderPreview]) is loaded —
-  // while true, the per-selected-clip raw-source sync below is suppressed so
-  // changing the timeline selection doesn't kick the player back to showing
-  // one clip's raw source.
-  bool _previewMode = false;
+  /// Signature of the timeline the currently-loaded proxy was rendered from.
+  /// A build whose freshly-computed signature differs schedules a re-render.
+  String? _renderedSignature;
+
+  /// Debounce timer: a burst of edits (e.g. a trim drag) collapses into a
+  /// single render once they stop.
+  Timer? _debounce;
+
+  /// True while an [Engine.renderPreview] call is in flight — a second edit
+  /// during that window sets [_renderPending] instead of starting a parallel
+  /// render, and we render once more when the current one finishes.
+  bool _rendering = false;
+  bool _renderPending = false;
 
   @override
   void initState() {
@@ -72,6 +91,7 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _zoom.dispose();
     _player.dispose();
     super.dispose();
@@ -80,12 +100,17 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
   @override
   Widget build(BuildContext context) {
     final editorState = ref.watch(editorProvider);
-    final selected = editorState.selected;
     final hasClips = editorState.clips.isNotEmpty;
     final previewBusy = ref.watch(previewRenderingProvider);
     final canvas = ref.watch(appProvider)?.video ?? const VideoSettings();
     final aspectRatio =
         canvas.height > 0 ? canvas.width / canvas.height : 16 / 9;
+    // Watched so edits to any lane (not just the video track) trigger a
+    // rebuild → signature check → WYSIWYG re-render below.
+    final audioClips = ref.watch(audioClipsProvider);
+    final videoOverlays = ref.watch(videoOverlaysProvider);
+    final textOverlays = ref.watch(textOverlaysProvider);
+    final stickerOverlays = ref.watch(stickerOverlaysProvider);
 
     // Keyboard shortcuts (Space, Left/Right arrow) send commands here rather
     // than touching media_kit directly, since the Player lives in this
@@ -106,23 +131,42 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
       }
     });
 
+    // Scrubbing the ruler/timeline sets the playhead (timeline seconds); seek
+    // the preview to match. The player's own position stream also writes the
+    // playhead continuously during playback, so only act on a jump big enough
+    // to be a deliberate scrub (not the frame-by-frame playback trickle) —
+    // that also stops this from fighting the position stream in a loop.
+    ref.listen<double>(playheadProvider, (previous, next) {
+      if (_loadedPath == null) return;
+      final deltaMs = (next * 1000 - _position.inMilliseconds).abs();
+      if (deltaMs > 200) {
+        _player.seek(Duration(milliseconds: (next * 1000).round()));
+      }
+    });
+
     if (!hasClips) {
-      // Nothing left to show — drop out of preview mode too, so the next
-      // import goes back to the normal per-clip sync below.
-      if (_loadedPath != null || _previewMode) {
+      // Nothing left to show — tear down any loaded proxy.
+      _debounce?.cancel();
+      if (_loadedPath != null) {
         _loadedPath = null;
-        _previewMode = false;
+        _renderedSignature = null;
         _player.stop();
       }
-    } else if (!_previewMode) {
-      // Not showing a timeline proxy: keep the player in sync with whichever
-      // clip is selected, same as before "Render preview" existed.
-      if (selected != null && selected.sourcePath != _loadedPath) {
-        _loadedPath = selected.sourcePath;
-        _player.open(Media(selected.sourcePath), play: false);
-      } else if (selected == null && _loadedPath != null) {
-        _loadedPath = null;
-        _player.stop();
+    } else {
+      // WYSIWYG: if the timeline differs from what the loaded proxy was
+      // rendered from, (re)render it. Computed every build, but the actual
+      // render is debounced + coalesced so this is cheap during editing.
+      final signature = _timelineSignature(
+        editorState,
+        canvas,
+        audioClips,
+        videoOverlays,
+        textOverlays,
+        stickerOverlays,
+      );
+      if (signature != _renderedSignature) {
+        _renderedSignature = signature;
+        _scheduleAutoRender();
       }
     }
 
@@ -167,33 +211,71 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     );
   }
 
+  /// A compact fingerprint of everything that affects the rendered preview, so
+  /// a rebuild can tell whether the timeline actually changed (vs. e.g. a
+  /// selection-only change, which shouldn't trigger a re-render).
+  String _timelineSignature(
+    EditorState state,
+    VideoSettings canvas,
+    List<AudioClip> audioClips,
+    List<VideoOverlay> videoOverlays,
+    List<TextOverlay> textOverlays,
+    List<StickerOverlay> stickerOverlays,
+  ) {
+    return jsonEncode({
+      'c': state.clips.map((c) => c.toJson()).toList(),
+      'a': audioClips.map((a) => a.toJson()).toList(),
+      'v': videoOverlays.map((v) => v.toJson()).toList(),
+      't': textOverlays.map((t) => t.toJson()).toList(),
+      's': stickerOverlays.map((s) => s.toJson()).toList(),
+      'w': canvas.width,
+      'h': canvas.height,
+    });
+  }
+
+  /// Debounce a WYSIWYG re-render: a burst of edits (dragging a trim handle,
+  /// typing a caption) collapses into a single render once it settles.
+  void _scheduleAutoRender() {
+    _debounce?.cancel();
+    _debounce =
+        Timer(const Duration(milliseconds: 450), _renderPreviewNow);
+  }
+
   /// Renders the whole timeline (all clips, transforms, speed, volume,
-  /// captions, text overlays) to a low-res proxy via [Engine.renderPreview]
-  /// and loads it into the player, replacing whatever raw clip was showing.
-  Future<void> _renderPreview() async {
+  /// captions, text/sticker/video overlays and the audio lane — the same
+  /// filtergraph `export` uses) to a low-res proxy via [Engine.renderPreview]
+  /// and loads it, preserving the current position and play state so editing
+  /// mid-playback doesn't jump the viewer back to the start. Coalesced: only
+  /// one render runs at a time; edits arriving during a render queue exactly
+  /// one more.
+  Future<void> _renderPreviewNow() async {
+    if (_rendering) {
+      _renderPending = true;
+      return;
+    }
     final clips = ref.read(editorProvider).clips;
     if (clips.isEmpty) return;
-    final textOverlays = ref.read(textOverlaysProvider);
-    final stickerOverlays = ref.read(stickerOverlaysProvider);
-    final audioClips = ref.read(audioClipsProvider);
-    final videoOverlays = ref.read(videoOverlaysProvider);
     final engine = ref.read(engineProvider);
     final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
 
+    _rendering = true;
     ref.read(previewRenderingProvider.notifier).set(true);
+    // Remember where the viewer was so the re-rendered proxy resumes there.
+    final resumeAt = _position;
+    final wasPlaying = _playing;
     try {
       final path = await engine.renderPreview(
           clips: clips,
-          textOverlays: textOverlays,
-          stickerOverlays: stickerOverlays,
-          audioClips: audioClips,
-          videoOverlays: videoOverlays,
+          textOverlays: ref.read(textOverlaysProvider),
+          stickerOverlays: ref.read(stickerOverlaysProvider),
+          audioClips: ref.read(audioClipsProvider),
+          videoOverlays: ref.read(videoOverlaysProvider),
           canvasWidth: canvas.width,
           canvasHeight: canvas.height);
       if (!mounted) return;
-      _previewMode = true;
       _loadedPath = path;
-      await _player.open(Media(path), play: false);
+      await _player.open(Media(path), play: wasPlaying);
+      if (resumeAt > Duration.zero) await _player.seek(resumeAt);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -201,7 +283,13 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
           ..showSnackBar(SnackBar(content: Text('Preview render failed: $e')));
       }
     } finally {
+      _rendering = false;
       if (mounted) ref.read(previewRenderingProvider.notifier).set(false);
+      // An edit landed while we were rendering — render exactly once more.
+      if (_renderPending && mounted) {
+        _renderPending = false;
+        _renderPreviewNow();
+      }
     }
   }
 
@@ -228,8 +316,13 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
             else
               VIconButton(
                 icon: Icons.movie_creation_outlined,
-                tooltip: 'Render preview',
-                onPressed: hasClips ? _renderPreview : null,
+                tooltip: 'Refresh preview now',
+                onPressed: hasClips
+                    ? () {
+                        _debounce?.cancel();
+                        _renderPreviewNow();
+                      }
+                    : null,
               ),
             const SizedBox(width: 4),
             Icon(Icons.menu, size: 16, color: Colors.white.withValues(alpha: 0.6)),

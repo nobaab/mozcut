@@ -24,6 +24,29 @@ void main() {
   });
   tearDown(() => container.dispose());
 
+  group('splitSelectedAt (timeline time)', () {
+    test('splits the selected clip at a timeline position, mapping it into '
+        "that clip's own source time", () {
+      // Three 10s clips → timeline [0,10], [10,20], [20,30]. Split the middle
+      // one at timeline 13s → 3s into the clip → 3s + 7s halves.
+      editor.select(clipAt(1).id);
+      editor.splitSelectedAt(13);
+
+      final clips = container.read(editorProvider).clips;
+      expect(clips.length, 4);
+      expect(clips[0].duration, closeTo(10, 0.001)); // a, untouched
+      expect(clips[1].duration, closeTo(3, 0.001)); // b, left half
+      expect(clips[2].duration, closeTo(7, 0.001)); // b, right half
+      expect(clips[3].duration, closeTo(10, 0.001)); // c, untouched
+    });
+
+    test('ignores a timeline position outside the selected clip', () {
+      editor.select(clipAt(1).id);
+      editor.splitSelectedAt(25); // inside clip c, not the selected clip b
+      expect(container.read(editorProvider).clips.length, 3);
+    });
+  });
+
   group('reorder', () {
     test('moves a clip from the front to the back', () {
       editor.reorder(0, 2);
@@ -651,11 +674,11 @@ void main() {
 
     test('addKeyframeAtPlayhead records the clip-relative playhead time '
         'and current static value', () {
-      editor.setTrim(clipAt(0).id, inPoint: 2);
-      container.read(playheadProvider.notifier).set(5); // source seconds
+      // The playhead is timeline seconds; for the only clip (which starts at
+      // timeline 0) clip-relative time equals the playhead directly.
+      container.read(playheadProvider.notifier).set(3);
       editor.updateTransform(scale: 3.0);
       editor.addKeyframeAtPlayhead(kKeyframeScale);
-      // clip-relative = playhead(5) - inPoint(2) = 3
       expect(clipAt(0).keyframes[kKeyframeScale],
           [const Keyframe(timeSec: 3.0, value: 3.0)]);
     });

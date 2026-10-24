@@ -210,11 +210,40 @@ class Editor extends _$Editor {
     });
   }
 
-  /// Splits the selected clip at [sourceSeconds] into two adjacent clips.
-  void splitSelectedAt(double sourceSeconds) {
+  /// The selected clip's start offset on the timeline, in (speed-adjusted)
+  /// timeline seconds — the sum of every earlier clip's [Clip.duration].
+  double _selectedClipStart() {
+    final idx = state.selectedIndex;
+    if (idx < 0) return 0;
+    var acc = 0.0;
+    for (var i = 0; i < idx; i++) {
+      acc += state.clips[i].duration;
+    }
+    return acc;
+  }
+
+  /// The playhead's position *within* the selected clip, in timeline seconds
+  /// (0..[Clip.duration]). The playhead ([playheadProvider]) is timeline time;
+  /// this maps it to clip-local time for per-clip operations (keyframes,
+  /// animation, split). Returns 0 when nothing is selected.
+  double _playheadWithinSelected() {
+    final c = state.selected;
+    if (c == null) return 0;
+    return (ref.read(playheadProvider) - _selectedClipStart())
+        .clamp(0.0, c.duration);
+  }
+
+  /// Splits the selected clip at [timelineSeconds] (a position on the whole
+  /// timeline) into two adjacent clips.
+  void splitSelectedAt(double timelineSeconds) {
     final idx = state.selectedIndex;
     if (idx < 0) return;
     final c = state.clips[idx];
+    // Map the timeline position into this clip's own source time. `within` is
+    // in timeline seconds (0..duration); multiplying by speed converts it to
+    // source seconds, since duration = (outPoint-inPoint)/speed.
+    final within = timelineSeconds - _selectedClipStart();
+    final sourceSeconds = c.inPoint + within * c.speed;
     if (sourceSeconds <= c.inPoint + 0.05 ||
         sourceSeconds >= c.outPoint - 0.05) {
       return; // split point outside the usable region
@@ -296,8 +325,7 @@ class Editor extends _$Editor {
     bool? flipH,
   }) {
     _mapSelected((c) {
-      final clipT =
-          (ref.read(playheadProvider) - c.inPoint).clamp(0.0, c.duration);
+      final clipT = _playheadWithinSelected();
       var keyframes = c.keyframes;
 
       // Writes [value] into [property]'s keyframe list at the current
@@ -402,7 +430,7 @@ class Editor extends _$Editor {
   void addKeyframeAtPlayhead(String property) {
     final c = state.selected;
     if (c == null) return;
-    final t = (ref.read(playheadProvider) - c.inPoint).clamp(0.0, c.duration);
+    final t = _playheadWithinSelected();
     addKeyframe(property, t, c.valueAt(property, t));
   }
 

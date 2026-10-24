@@ -258,16 +258,11 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     // at least one overlay to show.
     final showTextLane = textOverlays.isNotEmpty;
 
-    // Playhead base: the selected clip and its timeline offset, read
-    // *statically* here (this build deliberately does NOT watch
-    // playheadProvider). The live playhead position ticks many times a second
-    // during playback; isolating it into [_Playhead] below means that ticking
-    // repaints only the thin scrubber overlay, not the whole timeline and
-    // every clip bar/filmstrip/waveform underneath it — which is what made
-    // clicking and selecting feel laggy while the preview was playing.
-    final selIdx = state.selectedIndex;
-    final model.Clip? playheadClip = selIdx >= 0 ? state.clips[selIdx] : null;
-    final double playheadStart = selIdx >= 0 ? starts[selIdx] : 0;
+    // The live playhead is read only inside [_Playhead] below (which alone
+    // watches playheadProvider). This build deliberately does NOT watch it, so
+    // the playhead ticking during playback repaints just the thin scrubber
+    // overlay, not the whole timeline and every clip bar/filmstrip/waveform —
+    // which is what made clicking and selecting feel laggy while playing.
 
     final isEmpty = state.clips.isEmpty &&
         audioClips.isEmpty &&
@@ -618,11 +613,7 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                               // over the ruler. Isolated into its own
                               // playhead-watching widget (see [_Playhead]) so
                               // it repaints on its own during playback.
-                              _Playhead(
-                                px: px,
-                                start: playheadStart,
-                                clip: playheadClip,
-                              ),
+                              _Playhead(px: px),
                             ],
                           ),
                         ),
@@ -847,26 +838,15 @@ class _Ruler extends StatelessWidget {
 /// ([IgnorePointer]) so it never steals the ruler's scrub gesture or a lane's
 /// tap/drag from underneath.
 class _Playhead extends ConsumerWidget {
-  const _Playhead({required this.px, required this.start, required this.clip});
+  const _Playhead({required this.px});
 
   final double px;
 
-  /// The selected clip's start offset on the timeline, in seconds.
-  final double start;
-
-  /// The selected clip (its `inPoint`/`duration` map the live preview position
-  /// into a timeline position), or null when nothing is selected.
-  final model.Clip? clip;
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    double playheadT = 0;
-    final c = clip;
-    if (c != null) {
-      final within =
-          (ref.watch(playheadProvider) - c.inPoint).clamp(0.0, c.duration);
-      playheadT = start + within;
-    }
+    // [playheadProvider] is timeline seconds (0..totalDuration), driven by the
+    // preview player and the ruler scrub — position directly.
+    final playheadT = ref.watch(playheadProvider);
     return IgnorePointer(
       child: Stack(
         children: [
@@ -923,17 +903,18 @@ void _scrubToTimelineSeconds(
   double localDxSeconds,
 ) {
   final editor = ref.read(editorProvider.notifier);
-  var selIdx = state.selectedIndex;
-  if (selIdx < 0) {
+  if (state.selectedIndex < 0) {
     final idx = _clipIndexAt(state.clips, starts, localDxSeconds);
-    if (idx < 0) return;
-    editor.select(state.clips[idx].id);
-    selIdx = idx;
+    if (idx >= 0) editor.select(state.clips[idx].id);
   }
-  final clip = state.clips[selIdx];
-  final within =
-      (localDxSeconds - starts[selIdx]).clamp(0.0, clip.duration);
-  ref.read(playheadProvider.notifier).set(clip.inPoint + within);
+  // The playhead is timeline time; set it directly. The preview player
+  // listens and seeks to match (see PlayerPanel).
+  final total = starts.isEmpty
+      ? 0.0
+      : starts.last + state.clips.last.duration;
+  ref
+      .read(playheadProvider.notifier)
+      .set(localDxSeconds.clamp(0.0, total <= 0 ? localDxSeconds : total));
 }
 
 /// The index of the clip covering timeline second [t], clamping to the
