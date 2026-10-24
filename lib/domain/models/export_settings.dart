@@ -26,7 +26,8 @@ enum ExportQuality {
 /// The output container.
 enum ExportFormat {
   mp4('MP4', 'mp4'),
-  mov('MOV', 'mov');
+  mov('MOV', 'mov'),
+  gif('GIF', 'gif');
 
   const ExportFormat(this.label, this.extension);
 
@@ -65,6 +66,11 @@ class ExportSettings {
 
   /// The file extension (no dot) matching [format].
   String get fileExtension => format.extension;
+
+  /// Whether this export targets an animated GIF rather than a video
+  /// container. GIF has no audio track and ignores [codec]/[quality] (which
+  /// only make sense for a real video encoder) — see [toFfmpegArgs].
+  bool get isGif => format == ExportFormat.gif;
 
   /// CRF (constant rate factor) for [quality], tuned per [codec] — HEVC needs
   /// a numerically higher CRF than H.264 for comparable perceptual quality.
@@ -108,13 +114,25 @@ class ExportSettings {
   /// The ffmpeg output arguments controlling the video/audio codecs, quality
   /// and (optionally) frame rate. Does not include I/O, filtergraph or
   /// progress-reporting flags — those stay the caller's responsibility.
-  List<String> toFfmpegArgs() => [
-        '-c:v', videoCodecName,
-        '-preset', 'medium',
-        '-crf', '$crf',
-        if (fps != null) ...['-r', _trimFps(fps!)],
-        '-c:a', 'aac',
-      ];
+  ///
+  /// GIF is a different encoder family entirely — no `-c:v`/`-crf` (ffmpeg's
+  /// native GIF muxer picks its own encoder from the output extension) and no
+  /// audio (GIF has no audio track, and [Engine.export] doesn't map one in
+  /// for this format). `-loop 0` makes the result loop forever, matching
+  /// every other GIF export tool's default. Non-GIF formats are completely
+  /// unaffected — this branch is additive.
+  List<String> toFfmpegArgs() => isGif
+      ? [
+          if (fps != null) ...['-r', _trimFps(fps!)],
+          '-loop', '0',
+        ]
+      : [
+          '-c:v', videoCodecName,
+          '-preset', 'medium',
+          '-crf', '$crf',
+          if (fps != null) ...['-r', _trimFps(fps!)],
+          '-c:a', 'aac',
+        ];
 
   static String _trimFps(double f) =>
       f == f.roundToDouble() ? f.toStringAsFixed(0) : f.toStringAsFixed(2);

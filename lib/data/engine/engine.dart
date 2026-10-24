@@ -73,6 +73,28 @@ abstract class Engine {
     int width = 480,
   });
 
+  /// Renders one composited frame of the *whole timeline* — the same edit
+  /// [export] would produce (per-clip transform/speed, concatenated in
+  /// order, [textOverlays] and [stickerOverlays] burned in) — at [atSeconds]
+  /// on the final, concatenated timeline (the same timebase
+  /// [TextOverlay.start]/[end] are defined against), and writes it to
+  /// [outputPath]. The output format (PNG/JPEG) is inferred from
+  /// [outputPath]'s extension, same as ffmpeg always does. [settings] only
+  /// contributes its [ExportSettings.scaleFilter] (resolution) — codec/
+  /// quality/format are meaningless for a single still frame. [canvasWidth]/
+  /// [canvasHeight] mean the same thing as in [export]. Throws
+  /// [EngineException] if [clips] is empty or ffmpeg fails.
+  Future<void> exportStillFrame({
+    required List<Clip> clips,
+    ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
+    required double atSeconds,
+    required String outputPath,
+  });
+
   /// Extracts [clip]'s trimmed audio (its in/out region) to [outputPath].
   /// The container/codec is inferred from [outputPath]'s extension (e.g.
   /// `.wav` or `.mp3`). Throws [EngineException] if the clip has no audio or

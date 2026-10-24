@@ -37,6 +37,25 @@ const _resOptions = [
   _ResOption('4K', 3840, 2160),
 ];
 
+/// A one-tap platform preset: fills resolution *and* frame rate together,
+/// matching what that platform actually expects. `null`/`null`/`null` (never
+/// used by a real entry below — only by the synthetic "Custom" chip) would
+/// mean "source", same convention as [_ResOption]/[_FpsOption].
+class _PresetOption {
+  const _PresetOption(this.label, this.width, this.height, this.fps);
+  final String label;
+  final int? width;
+  final int? height;
+  final double? fps;
+}
+
+const _presetOptions = [
+  _PresetOption('TikTok/Reels', 1080, 1920, 30),
+  _PresetOption('YouTube', 1920, 1080, 30),
+  _PresetOption('Square', 1080, 1080, 30),
+  _PresetOption('YouTube 4K', 3840, 2160, 30),
+];
+
 /// Shows the export settings dialog and resolves to the [ExportSettings] the
 /// user chose, or `null` if they cancelled.
 Future<ExportSettings?> showExportDialog(BuildContext context) =>
@@ -96,6 +115,42 @@ class _ExportDialogState extends State<ExportDialog> {
             const SizedBox(height: 20),
 
             VPropertyRow(
+              label: 'Preset',
+              labelWidth: 96,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final p in _presetOptions)
+                    VChip(
+                      label: p.label,
+                      selected: _width == p.width &&
+                          _height == p.height &&
+                          _fps == p.fps,
+                      onTap: () => setState(() {
+                        _width = p.width;
+                        _height = p.height;
+                        _fps = p.fps;
+                      }),
+                    ),
+                  // "Custom" isn't a real option to apply — it's whatever is
+                  // true when none of the presets above match, so it just
+                  // highlights itself and leaves the manual Resolution/Frame
+                  // rate chips below in full control.
+                  VChip(
+                    label: 'Custom',
+                    selected: !_presetOptions.any((p) =>
+                        _width == p.width &&
+                        _height == p.height &&
+                        _fps == p.fps),
+                    onTap: () {},
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            VPropertyRow(
               label: 'Resolution',
               labelWidth: 96,
               child: Wrap(
@@ -135,41 +190,47 @@ class _ExportDialogState extends State<ExportDialog> {
             ),
             const SizedBox(height: 12),
 
-            VPropertyRow(
-              label: 'Codec',
-              labelWidth: 96,
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final c in ExportCodec.values)
-                    VChip(
-                      label: c.label,
-                      selected: _codec == c,
-                      onTap: () => setState(() => _codec = c),
-                    ),
-                ],
+            // GIF has no real video encoder/quality knob of its own (ffmpeg's
+            // GIF muxer always uses its own palette-based pipeline — see
+            // ExportSettings.toFfmpegArgs) — Codec/Quality would just be
+            // dead controls, so they're hidden rather than shown-but-ignored.
+            if (_format != ExportFormat.gif) ...[
+              VPropertyRow(
+                label: 'Codec',
+                labelWidth: 96,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final c in ExportCodec.values)
+                      VChip(
+                        label: c.label,
+                        selected: _codec == c,
+                        onTap: () => setState(() => _codec = c),
+                      ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
 
-            VPropertyRow(
-              label: 'Quality',
-              labelWidth: 96,
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final q in ExportQuality.values)
-                    VChip(
-                      label: q.label,
-                      selected: _quality == q,
-                      onTap: () => setState(() => _quality = q),
-                    ),
-                ],
+              VPropertyRow(
+                label: 'Quality',
+                labelWidth: 96,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final q in ExportQuality.values)
+                      VChip(
+                        label: q.label,
+                        selected: _quality == q,
+                        onTap: () => setState(() => _quality = q),
+                      ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
+            ],
 
             VPropertyRow(
               label: 'Format',

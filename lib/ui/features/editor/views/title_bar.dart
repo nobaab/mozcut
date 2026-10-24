@@ -66,6 +66,13 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
               icon: Icons.ios_share,
               onPressed: () => _soon(context, 'Share')),
           const SizedBox(width: 8),
+          VIconButton(
+            icon: Icons.photo_camera_outlined,
+            tooltip: 'Export frame at playhead as image',
+            onPressed:
+                hasClips && !exporting ? () => _exportFrame(context, ref) : null,
+          ),
+          const SizedBox(width: 8),
           if (exporting)
             SizedBox(
               width: 150,
@@ -131,6 +138,62 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
     } finally {
       progress.set(null);
     }
+  }
+
+  /// Saves the frame currently showing at the player's playhead as a PNG.
+  /// Reuses the exact composited-timeline frame [Engine.exportStillFrame]
+  /// produces — transforms, captions, text/sticker overlays all included,
+  /// same as a real export would show at this instant.
+  Future<void> _exportFrame(BuildContext context, WidgetRef ref) async {
+    final clips = ref.read(editorProvider).clips;
+    if (clips.isEmpty) return;
+    await FilePicker.skipEntitlementsChecks();
+    final dir = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose where to save the frame');
+    if (dir == null) return;
+    if (!context.mounted) return;
+    final path =
+        '$dir/mozcut_frame_${DateTime.now().millisecondsSinceEpoch}.png';
+    final engine = ref.read(engineProvider);
+    final textOverlays = ref.read(textOverlaysProvider);
+    final stickerOverlays = ref.read(stickerOverlaysProvider);
+    final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
+    final atSeconds = _playheadTimelineSeconds(ref);
+    try {
+      await engine.exportStillFrame(
+          clips: clips,
+          textOverlays: textOverlays,
+          stickerOverlays: stickerOverlays,
+          canvasWidth: canvas.width,
+          canvasHeight: canvas.height,
+          atSeconds: atSeconds,
+          outputPath: path);
+      if (context.mounted) _snack(context, 'Frame saved to $path');
+    } catch (e) {
+      if (context.mounted) _snack(context, 'Frame export failed: $e');
+    }
+  }
+
+  /// Where the player's playhead currently sits on the *timeline* — the same
+  /// seconds [Clip] durations stack up in, not the per-clip source seconds
+  /// [Playhead] itself stores (see its doc comment). Mirrors the calculation
+  /// `AudioPanel`/`TimelinePanel` use to place their own playhead markers:
+  /// cumulative start of the selected clip on the track, plus how far into
+  /// that clip the preview currently is. Falls back to the raw playhead value
+  /// when nothing is selected (e.g. right after "Render preview" loads the
+  /// whole-timeline proxy, where the playhead *is* already timeline-relative).
+  double _playheadTimelineSeconds(WidgetRef ref) {
+    final editor = ref.read(editorProvider);
+    final idx = editor.selectedIndex;
+    final playhead = ref.read(playheadProvider);
+    if (idx < 0 || idx >= editor.clips.length) return playhead;
+    var start = 0.0;
+    for (var i = 0; i < idx; i++) {
+      start += editor.clips[i].duration;
+    }
+    final clip = editor.clips[idx];
+    final within = (playhead - clip.inPoint).clamp(0.0, clip.duration);
+    return start + within;
   }
 
   void _snack(BuildContext context, String msg) =>
