@@ -496,9 +496,14 @@ class FfmpegEngine implements Engine {
             // as the output runs, the same convention an image *clip*
             // input uses above, for the same reason). Scaled to `size` (a
             // fraction of the output frame's *height*) via `scale2ref`,
-            // whose `main_h` is the actual output frame height at run
-            // time — resolution-independent the same way `_drawtextFilter`'s
-            // `fontsize=h*fraction` is. `scale2ref`'s second output is the
+            // resolution-independent the same way `_drawtextFilter`'s
+            // `fontsize=h*fraction` is. Note `scale2ref`'s expression
+            // constants on this ffmpeg are the reverse of their names:
+            // `ih` is the *reference* (running video pad) height while
+            // `main_w`/`main_h` are the sticker image's *own* original
+            // dimensions — so `h='ih*size'` sizes to the live pad and the
+            // `main_w/main_h` factor on `w` preserves the image's aspect.
+            // `scale2ref`'s second output is the
             // untouched video pad, which becomes the new running
             // `videoLabel`. Optionally rotated (`c=none` keeps the corners
             // exposed by rotation transparent instead of filling them),
@@ -513,8 +518,10 @@ class FfmpegEngine implements Engine {
 
             final scaledLabel = '[stksc$i]';
             final refLabel = '[stkref$i]';
-            filter.write(';$fmtLabel${videoLabel}scale2ref=w=-2:h='
-                "'main_h*${_fmtFilterNum(sticker.size)}'$scaledLabel$refLabel");
+            final stkSz = _fmtFilterNum(sticker.size);
+            filter.write(';$fmtLabel${videoLabel}scale2ref='
+                "w='ih*$stkSz*main_w/main_h':h='ih*$stkSz'"
+                '$scaledLabel$refLabel');
             videoLabel = refLabel;
 
             var imagePad = scaledLabel;
@@ -622,9 +629,13 @@ class FfmpegEngine implements Engine {
         final isBlend = overlay.blendMode != 'normal';
         final scaledLabel = '[vosc$i]';
         final refLabel = '[voref$i]';
+        final voSc = _fmtFilterNum(overlay.scale);
+        // `h=-2` would echo the *reference's* aspect (stretching the overlay
+        // to the canvas shape); compute height from the overlay's own
+        // `main_h/main_w` instead so PiP keeps its native aspect ratio.
         final sizeExpr = isBlend
             ? "w='iw':h='ih'"
-            : "w='iw*${_fmtFilterNum(overlay.scale)}':h=-2";
+            : "w='iw*$voSc':h='iw*$voSc*main_h/main_w'";
         filter.write(
             ';$fmtLabel${videoLabel}scale2ref=$sizeExpr$scaledLabel$refLabel');
         videoLabel = refLabel;

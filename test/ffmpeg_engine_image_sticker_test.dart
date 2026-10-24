@@ -69,8 +69,10 @@ void main() {
     // references `overlay_w`/`overlay_h`, only this stage does).
     expect(filter, contains('overlay_w/2'));
     expect(filter, contains('overlay_h/2'));
-    // Scaled to the sticker's own `size` (a fraction of the output height).
-    expect(filter, contains("main_h*0.300000"));
+    // Scaled to a fraction of the output height. On this ffmpeg `ih` is
+    // scale2ref's name for the *reference* (running video pad) height, so
+    // `ih*size` sizes the sticker to the canvas, not to its own pixels.
+    expect(filter, contains("ih*0.300000"));
     // Positioned at its own x/y anchor.
     expect(filter, contains('main_w*0.250000'));
     expect(filter, contains('main_h*0.600000'));
