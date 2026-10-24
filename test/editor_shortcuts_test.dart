@@ -1,0 +1,177 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mozcut/data/engine/engine.dart';
+import 'package:mozcut/data/engine/ffmpeg_engine.dart';
+import 'package:mozcut/domain/models/audio_clip.dart';
+import 'package:mozcut/domain/models/clip.dart';
+import 'package:mozcut/domain/models/export_settings.dart';
+import 'package:mozcut/domain/models/sticker_overlay.dart';
+import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/domain/models/video_overlay.dart';
+import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
+import 'package:mozcut/ui/features/editor/views/editor_shortcuts.dart';
+
+/// A stand-in engine so these UI tests never touch ffmpeg.
+class _FakeEngine implements Engine {
+  @override
+  Future<double> probeDuration(String path) async => 12.0;
+
+  @override
+  Future<(int, int)> probeDimensions(String path) async => (1920, 1080);
+
+  @override
+  Future<void> export({
+    required List<Clip> clips,
+    required String outputPath,
+    ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
+    List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
+    void Function(double)? onProgress,
+  }) async {}
+
+  @override
+  Future<String> renderPreview({
+    required List<Clip> clips,
+    List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
+    List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
+    void Function(double)? onProgress,
+  }) async => '';
+
+  @override
+  Future<void> savePoster({
+    required Clip clip,
+    required String outputPath,
+    int width = 480,
+  }) async {}
+
+  @override
+  Future<void> exportStillFrame({
+    required List<Clip> clips,
+    ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
+    required double atSeconds,
+    required String outputPath,
+  }) async {}
+
+  @override
+  Future<void> extractAudio({
+    required Clip clip,
+    required String outputPath,
+  }) async {}
+
+  @override
+  Future<String> generateSfx(String id) async => '';
+
+  @override
+  Future<String> generateShape(String id) async => '';
+
+  @override
+  Future<List<String>> extractThumbnails({
+    required Clip clip,
+    required int count,
+    int height = 64,
+  }) async => const [];
+
+  @override
+  Future<String?> waveformPng({
+    required Clip clip,
+    required int width,
+    int height = 40,
+  }) async => null;
+}
+
+void main() {
+  Future<(ProviderContainer, Editor)> pumpWithClips(WidgetTester tester) async {
+    final container = ProviderContainer(
+      overrides: [engineProvider.overrideWithValue(_FakeEngine())],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: EditorShortcuts(child: Scaffold(body: SizedBox.expand())),
+        ),
+      ),
+    );
+
+    final editor = container.read(editorProvider.notifier);
+    await editor.addClip('/a/clip.mp4');
+    await editor.addClip('/b/clip.mp4'); // last-added is selected
+    await tester.pump();
+    return (container, editor);
+  }
+
+  testWidgets('Delete key removes the selected clip (no focus needed)',
+      (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+    expect(container.read(editorProvider).clips.length, 2);
+    expect(container.read(editorProvider).selected, isNotNull);
+
+    // The whole point of the fix: the shortcut fires via a global keyboard
+    // handler, so it works even though nothing in the tree holds focus.
+    await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+    await tester.pump();
+
+    expect(container.read(editorProvider).clips.length, 1);
+  });
+
+  testWidgets('Backspace also removes the selected clip', (tester) async {
+    final (container, _) = await pumpWithClips(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pump();
+    expect(container.read(editorProvider).clips.length, 1);
+  });
+
+  testWidgets('a text field with focus is never hijacked by shortcuts',
+      (tester) async {
+    final container = ProviderContainer(
+      overrides: [engineProvider.overrideWithValue(_FakeEngine())],
+    );
+    addTearDown(container.dispose);
+
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: EditorShortcuts(
+            child: Scaffold(body: TextField(controller: controller)),
+          ),
+        ),
+      ),
+    );
+
+    final editor = container.read(editorProvider.notifier);
+    await editor.addClip('/a/clip.mp4');
+    await editor.addClip('/b/clip.mp4');
+    await tester.pump();
+
+    // Focus the text field and type a character that is also a shortcut ('s'
+    // = split). It must go to the field, and must NOT split a clip.
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 's');
+    await tester.pump();
+
+    expect(container.read(editorProvider).clips.length, 2,
+        reason: 'typing in a field must not trigger split');
+    expect(controller.text, 's');
+  });
+}

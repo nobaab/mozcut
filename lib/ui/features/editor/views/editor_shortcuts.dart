@@ -7,14 +7,16 @@ import '../view_models/player_control.dart';
 
 /// Keyboard shortcuts for the editor.
 ///
-/// Wraps the editor body in a [Focus] node that sits above every panel.
-/// Flutter dispatches key events starting at whatever currently has focus
-/// and bubbles them up through ancestor [Focus] nodes, so a focused text
-/// field (search box, caption editor, inspector field, …) always gets first
-/// refusal — and on top of that, [_textFieldHasFocus] explicitly bails out
-/// whenever a text field owns focus, so none of these bindings ever hijack
-/// typing.
-class EditorShortcuts extends ConsumerWidget {
+/// Earlier this used a [Focus] node, but on desktop a single click on a
+/// non-focusable widget (a clip's [GestureDetector], a plain button) moves or
+/// clears the primary focus, and key events are dispatched up the ancestor
+/// chain of *whatever currently has focus* — so after one click the editor's
+/// Focus node stopped receiving anything and every shortcut died. Instead this
+/// registers a handler directly on [HardwareKeyboard], which sees every key
+/// event regardless of what (if anything) is focused. [_textFieldHasFocus]
+/// still bails out whenever a text field owns focus, so typing is never
+/// hijacked.
+class EditorShortcuts extends ConsumerStatefulWidget {
   const EditorShortcuts({super.key, required this.child});
 
   final Widget child;
@@ -23,31 +25,40 @@ class EditorShortcuts extends ConsumerWidget {
   static const double nudgeSeconds = 1 / 30;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Focus(
-      autofocus: true,
-      skipTraversal: true,
-      onKeyEvent: (node, event) => _handleKey(context, ref, event),
-      child: child,
-    );
+  ConsumerState<EditorShortcuts> createState() => _EditorShortcutsState();
+}
+
+class _EditorShortcutsState extends ConsumerState<EditorShortcuts> {
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKey);
   }
 
-  KeyEventResult _handleKey(
-      BuildContext context, WidgetRef ref, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-      return KeyEventResult.ignored;
-    }
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKey);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+
+  /// Returns true to consume the event (so it isn't also delivered elsewhere).
+  bool _handleKey(KeyEvent event) {
+    if (!mounted) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
     // Never hijack typing: once a text field owns focus, let the event go
     // to it (and its own built-in editing shortcuts) untouched.
-    if (_textFieldHasFocus()) return KeyEventResult.ignored;
+    if (_textFieldHasFocus()) return false;
 
     for (final entry in _bindings(context, ref).entries) {
       if (entry.key.accepts(event, HardwareKeyboard.instance)) {
         entry.value();
-        return KeyEventResult.handled;
+        return true;
       }
     }
-    return KeyEventResult.ignored;
+    return false;
   }
 
   bool _textFieldHasFocus() {
@@ -81,10 +92,12 @@ class EditorShortcuts extends ConsumerWidget {
           _redo(context, ref),
       const SingleActivator(LogicalKeyboardKey.keyY, meta: true): () =>
           _redo(context, ref),
-      const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
-          ref.read(playerControlProvider.notifier).seekBy(-nudgeSeconds),
-      const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
-          ref.read(playerControlProvider.notifier).seekBy(nudgeSeconds),
+      const SingleActivator(LogicalKeyboardKey.arrowLeft): () => ref
+          .read(playerControlProvider.notifier)
+          .seekBy(-EditorShortcuts.nudgeSeconds),
+      const SingleActivator(LogicalKeyboardKey.arrowRight): () => ref
+          .read(playerControlProvider.notifier)
+          .seekBy(EditorShortcuts.nudgeSeconds),
     };
   }
 
