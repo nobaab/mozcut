@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -36,6 +37,10 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
   late final Player _player = Player();
   late final VideoController _controller = VideoController(_player);
 
+  /// Preview zoom/pan. Identity = "Fit" (the video letterboxed to the canvas).
+  /// Scroll/pinch to zoom in and pan; the Fit button resets this to identity.
+  final TransformationController _zoom = TransformationController();
+
   String? _loadedPath;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -65,6 +70,7 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
 
   @override
   void dispose() {
+    _zoom.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -140,8 +146,15 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
                   : Center(
                       child: AspectRatio(
                         aspectRatio: aspectRatio,
-                        child: Video(
-                            controller: _controller, controls: NoVideoControls),
+                        child: InteractiveViewer(
+                          transformationController: _zoom,
+                          clipBehavior: Clip.hardEdge,
+                          minScale: 1,
+                          maxScale: 5,
+                          child: Video(
+                              controller: _controller,
+                              controls: NoVideoControls),
+                        ),
                       ),
                     ),
             ),
@@ -248,9 +261,9 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
                 onPressed: () => _player.playOrPause(),
               ),
               const Spacer(),
-              _ctl(Icons.fit_screen, 'Fit'),
+              _ctl(Icons.fit_screen, 'Fit', _resetZoom),
               _ratioControl(),
-              _ctl(Icons.fullscreen, 'Fullscreen'),
+              _ctl(Icons.fullscreen, 'Fullscreen', _enterFullscreen),
             ],
           ),
         ],
@@ -258,12 +271,71 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     );
   }
 
-  Widget _ctl(IconData icon, String tip) => VIconButton(
+  Widget _ctl(IconData icon, String tip, VoidCallback onPressed) => VIconButton(
         icon: icon,
         tooltip: tip,
-        onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('$tip — coming soon'))),
+        onPressed: onPressed,
       );
+
+  /// "Fit" — reset preview zoom/pan so the video is letterboxed to the canvas.
+  void _resetZoom() => _zoom.value = Matrix4.identity();
+
+  /// Fills the whole window with the preview (same [Player]/[VideoController]),
+  /// letterboxed to the project's canvas aspect. Esc, the close button, or
+  /// tapping the background exits; playback state is unchanged (same player).
+  void _enterFullscreen() {
+    final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
+    final aspect = canvas.height > 0 ? canvas.width / canvas.height : 16 / 9;
+    Navigator.of(context).push(PageRouteBuilder(
+      opaque: true,
+      barrierColor: Colors.black,
+      pageBuilder: (ctx, _, _) => CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape):
+              () => Navigator.of(ctx).pop(),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            backgroundColor: Colors.black,
+            body: Stack(
+              children: [
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: aspect,
+                    child: Video(
+                        controller: _controller, controls: NoVideoControls),
+                  ),
+                ),
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: IconButton(
+                    icon: const Icon(Icons.fullscreen_exit,
+                        color: Colors.white, size: 28),
+                    tooltip: 'Exit full screen (Esc)',
+                    onPressed: () => Navigator.of(ctx).pop(),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 24,
+                  child: Center(
+                    child: IconButton(
+                      icon: Icon(_playing ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white, size: 40),
+                      onPressed: () => _player.playOrPause(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ));
+  }
 
   /// The Ratio control: shows the project's current ratio label and opens
   /// [RatioDialog] on tap — presets, "Original" (probes the first clip via
