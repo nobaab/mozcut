@@ -155,4 +155,75 @@ void main() {
       expect(restored.mediaType, MediaType.video);
     });
   });
+
+  group('Clip animation fields', () {
+    test('default to no animation and a 0.5s duration', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);
+      expect(clip.animationIn, isNull);
+      expect(clip.animationOut, isNull);
+      expect(clip.animationInDuration, kAnimationDefaultDuration);
+      expect(clip.animationOutDuration, kAnimationDefaultDuration);
+    });
+
+    test('copyWith sets animationIn/Out and their durations', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10).copyWith(
+        animationIn: kAnimFade,
+        animationInDuration: 1.0,
+        animationOut: kAnimZoomOut,
+        animationOutDuration: 0.3,
+      );
+      expect(clip.animationIn, kAnimFade);
+      expect(clip.animationInDuration, 1.0);
+      expect(clip.animationOut, kAnimZoomOut);
+      expect(clip.animationOutDuration, 0.3);
+    });
+
+    test('copyWith clearAnimationIn/Out clear them back to null', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10).copyWith(
+        animationIn: kAnimFade,
+        animationOut: kAnimFade,
+      );
+      final cleared =
+          clip.copyWith(clearAnimationIn: true, clearAnimationOut: true);
+      expect(cleared.animationIn, isNull);
+      expect(cleared.animationOut, isNull);
+    });
+
+    test('toJson/fromJson round-trips animationIn/Out and their durations',
+        () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10).copyWith(
+        animationIn: kAnimSlideLeft,
+        animationInDuration: 0.8,
+        animationOut: kAnimFade,
+        animationOutDuration: 1.5,
+      );
+      final restored = Clip.fromJson(clip.toJson());
+      expect(restored.animationIn, kAnimSlideLeft);
+      expect(restored.animationInDuration, 0.8);
+      expect(restored.animationOut, kAnimFade);
+      expect(restored.animationOutDuration, 1.5);
+    });
+
+    test('an unanimated clip omits animation keys from its JSON '
+        '(byte-for-byte pre-feature output)', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);
+      final json = clip.toJson();
+      expect(json.containsKey('animationIn'), isFalse);
+      expect(json.containsKey('animationInDuration'), isFalse);
+      expect(json.containsKey('animationOut'), isFalse);
+      expect(json.containsKey('animationOutDuration'), isFalse);
+    });
+
+    test('fromJson defaults to no animation when keys are absent '
+        '(old manifests)', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10)
+          .copyWith(animationIn: kAnimFade);
+      final json = clip.toJson()
+        ..remove('animationIn')
+        ..remove('animationInDuration');
+      final restored = Clip.fromJson(json);
+      expect(restored.animationIn, isNull);
+      expect(restored.animationInDuration, kAnimationDefaultDuration);
+    });
+  });
 }

@@ -14,6 +14,52 @@ const kKeyframePosY = 'posY';
 const kKeyframeRotation = 'rotation';
 const kKeyframeOpacity = 'opacity';
 
+/// Clip-animation preset ids (the Animation tab's In/Out/Combo presets — see
+/// docs/CAPCUT-SPEC.md §5.5 and `Editor.applyAnimation`). Applying one
+/// generates keyframes over the first/last [Clip.animationInDuration] /
+/// [Clip.animationOutDuration] seconds of the clip on whichever transform
+/// property the preset animates; `kAnimNone` clears it. Plain string
+/// constants (not an enum) for the same reason as the `kKeyframe*` ids above
+/// — they're stored on [Clip] and threaded through the UI/Editor as values.
+const kAnimNone = 'none';
+const kAnimFade = 'fade';
+const kAnimZoomIn = 'zoomIn';
+const kAnimZoomOut = 'zoomOut';
+const kAnimSlideLeft = 'slideLeft';
+const kAnimSlideRight = 'slideRight';
+const kAnimSlideUp = 'slideUp';
+const kAnimSlideDown = 'slideDown';
+
+/// Every selectable preset (excluding [kAnimNone], which the UI renders as
+/// its own leading chip) in display order.
+const kAnimationPresets = <String>[
+  kAnimFade,
+  kAnimZoomIn,
+  kAnimZoomOut,
+  kAnimSlideLeft,
+  kAnimSlideRight,
+  kAnimSlideUp,
+  kAnimSlideDown,
+];
+
+/// Human-readable label for an animation preset id (including [kAnimNone]).
+const kAnimationPresetLabels = <String, String>{
+  kAnimNone: 'None',
+  kAnimFade: 'Fade',
+  kAnimZoomIn: 'Zoom In',
+  kAnimZoomOut: 'Zoom Out',
+  kAnimSlideLeft: 'Slide Left',
+  kAnimSlideRight: 'Slide Right',
+  kAnimSlideUp: 'Slide Up',
+  kAnimSlideDown: 'Slide Down',
+};
+
+/// Default/minimum/maximum length of a clip-in/out animation, in seconds
+/// (see docs/CAPCUT-SPEC.md §5.5: "default 0.5s").
+const kAnimationDefaultDuration = 0.5;
+const kAnimationMinDuration = 0.1;
+const kAnimationMaxDuration = 3.0;
+
 const _uuid = Uuid();
 
 /// Default timeline length given to a freshly-imported image clip — an image
@@ -59,6 +105,10 @@ class Clip {
     this.originalSourcePath,
     MediaType? mediaType,
     Map<String, List<Keyframe>>? keyframes,
+    this.animationIn,
+    double? animationInDuration,
+    this.animationOut,
+    double? animationOutDuration,
   })  : id = id ?? _uuid.v4(),
         mediaType = mediaType ?? MediaType.video,
         inPoint = inPoint ?? 0,
@@ -72,6 +122,9 @@ class Clip {
         keyframes = keyframes == null
             ? const <String, List<Keyframe>>{}
             : Map.unmodifiable(keyframes),
+        animationInDuration = animationInDuration ?? kAnimationDefaultDuration,
+        animationOutDuration =
+            animationOutDuration ?? kAnimationDefaultDuration,
         flipH = flipH ?? false,
         speed = speed ?? 1.0,
         volume = volume ?? 1.0,
@@ -138,6 +191,32 @@ class Clip {
   /// `Clip.valueAt` falls back to the static field in that case, so export
   /// produces the exact same filtergraph as before this feature existed.
   Map<String, List<Keyframe>> keyframes;
+
+  // ── clip animation (In/Out) ──
+  // The Animation tab's presets (see docs/CAPCUT-SPEC.md §5.5) are
+  // implemented as generated keyframes on the property above — these two
+  // fields exist purely so the UI knows which preset (if any) is currently
+  // applied to each edge and at what length, since that can't be reliably
+  // inferred back out of the keyframe lists alone. Set (and cleared) only by
+  // `Editor.applyAnimation`. Null means that edge has no animation, the
+  // default for every clip.
+
+  /// The preset id (a `kAnim*` constant from this file) applied to the first
+  /// [animationInDuration] seconds of the clip, or null for none.
+  String? animationIn;
+
+  /// Length of [animationIn], in seconds. Meaningful only when [animationIn]
+  /// is non-null, but keeps its last value (default
+  /// [kAnimationDefaultDuration]) so the UI's duration slider has something
+  /// sensible to show even before a preset is picked.
+  double animationInDuration;
+
+  /// The preset id applied to the last [animationOutDuration] seconds of the
+  /// clip, or null for none.
+  String? animationOut;
+
+  /// Length of [animationOut], in seconds. See [animationInDuration].
+  double animationOutDuration;
 
   // ── Speed & audio ──
 
@@ -292,6 +371,12 @@ class Clip {
     bool clearOriginalSourcePath = false,
     MediaType? mediaType,
     Map<String, List<Keyframe>>? keyframes,
+    String? animationIn,
+    bool clearAnimationIn = false,
+    double? animationInDuration,
+    String? animationOut,
+    bool clearAnimationOut = false,
+    double? animationOutDuration,
   }) =>
       Clip(
         id: id,
@@ -324,6 +409,13 @@ class Clip {
             : (originalSourcePath ?? this.originalSourcePath),
         mediaType: mediaType ?? this.mediaType,
         keyframes: keyframes ?? this.keyframes,
+        animationIn:
+            clearAnimationIn ? null : (animationIn ?? this.animationIn),
+        animationInDuration: animationInDuration ?? this.animationInDuration,
+        animationOut:
+            clearAnimationOut ? null : (animationOut ?? this.animationOut),
+        animationOutDuration:
+            animationOutDuration ?? this.animationOutDuration,
       );
 
   Map<String, dynamic> toJson() => {
@@ -360,6 +452,13 @@ class Clip {
             (property, kfs) =>
                 MapEntry(property, kfs.map((k) => k.toJson()).toList()),
           ),
+        // Same reasoning as keyframes above: only written when an animation
+        // is actually applied, so a clip with neither matches pre-feature
+        // JSON exactly.
+        if (animationIn != null) 'animationIn': animationIn,
+        if (animationIn != null) 'animationInDuration': animationInDuration,
+        if (animationOut != null) 'animationOut': animationOut,
+        if (animationOut != null) 'animationOutDuration': animationOutDuration,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -400,5 +499,10 @@ class Clip {
                 .toList(),
           ),
         ),
+        animationIn: json['animationIn'] as String?,
+        animationInDuration: (json['animationInDuration'] as num?)?.toDouble(),
+        animationOut: json['animationOut'] as String?,
+        animationOutDuration:
+            (json['animationOutDuration'] as num?)?.toDouble(),
       );
 }
