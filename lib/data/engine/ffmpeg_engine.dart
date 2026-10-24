@@ -16,6 +16,7 @@ import '../../domain/models/shape_presets.dart';
 import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
 import '../../domain/models/transition_presets.dart';
+import '../../domain/models/video_overlay.dart';
 import 'engine.dart';
 
 part 'ffmpeg_engine.g.dart';
@@ -123,6 +124,7 @@ class FfmpegEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double progress)? onProgress,
@@ -139,6 +141,7 @@ class FfmpegEngine implements Engine {
       textOverlays: textOverlays,
       stickerOverlays: stickerOverlays,
       audioClips: audioClips,
+      videoOverlays: videoOverlays,
       scaleFilter: settings.scaleFilter,
       canvasWidth: canvasWidth,
       canvasHeight: canvasHeight,
@@ -256,6 +259,7 @@ class FfmpegEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double progress)? onProgress,
@@ -277,6 +281,7 @@ class FfmpegEngine implements Engine {
       textOverlays: textOverlays,
       stickerOverlays: stickerOverlays,
       audioClips: audioClips,
+      videoOverlays: videoOverlays,
       scaleFilter: 'scale=$_previewWidth:-2',
       canvasWidth: canvasWidth,
       canvasHeight: canvasHeight,
@@ -315,9 +320,11 @@ class FfmpegEngine implements Engine {
   /// then captions burned in from clips' caption lists, then one `drawtext`
   /// per entry in [textOverlays], then one more `drawtext` per entry in
   /// [stickerOverlays] (an emoji sticker is rendered as text, with a
-  /// colour-emoji font — see [_resolveUsableEmojiFont]). Factored out of
-  /// `export` so the two call sites can never drift — this is exactly the
-  /// graph `export` built inline before [renderPreview] existed.
+  /// colour-emoji font — see [_resolveUsableEmojiFont]), then composites one
+  /// more layer per entry in [videoOverlays] (the picture-in-picture lane —
+  /// see the block below for the ffmpeg mapping). Factored out of `export` so
+  /// the two call sites can never drift — this is exactly the graph `export`
+  /// built inline before [renderPreview] existed.
   ///
   /// Returns the pieces still needed to assemble a full ffmpeg invocation,
   /// plus any temp files (captions .srt, overlay/sticker text files) the
@@ -327,6 +334,7 @@ class FfmpegEngine implements Engine {
     required List<TextOverlay> textOverlays,
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     String? scaleFilter,
     int canvasWidth = 1920,
     int canvasHeight = 1080,
@@ -554,18 +562,132 @@ class FfmpegEngine implements Engine {
         }
       }
 
+      // Composite the picture-in-picture lane: one more video (or
+      // image-as-video) layer per [VideoOverlay], each with its own trimmed
+      // `-i` input (`-ss`/`-to`, same convention as a main clip), chained
+      // after text/sticker burn-in so a PiP floats above both. `mixLabels`
+      // for overlay *audio* (if any) is collected here but mixed in below,
+      // alongside `audioClips`, so there is exactly one `amix` stage.
+      //
+      // Each overlay's video is: reset to pts 0 (`setpts=PTS-STARTPTS`, same
+      // safety [AudioClip]'s trim relies on implicitly) then shifted so its
+      // first frame lands at `startTime` on the *output* timeline
+      // (`+startTime/TB`) — `overlay`/`blend`'s own frame-sync only decides
+      // *when* to apply the filter (via `enable`), it never shifts an
+      // input's own timestamps, so without this shift the overlay would
+      // always appear to start at t=0 regardless of `startTime`. Then scaled
+      // against the *running* video pad via `scale2ref` — resolution-
+      // independent the same way [StickerOverlay] burn-in is, since the
+      // reference's size is read from the actual pad at run time, not from
+      // [canvasWidth]/[canvasHeight] (correct even after a `renderPreview`
+      // downscale). Note `scale2ref`'s expression constants are the *reverse*
+      // of what their names suggest at a glance: inside its `w=`/`h=`
+      // expressions, `iw`/`ih` are the *reference* (second) input's
+      // dimensions and `main_w`/`main_h` are the to-be-scaled (first) input's
+      // *own* original dimensions — confirmed empirically against a real
+      // local ffmpeg 8.0 (`scale2ref=w='main_w'...` is a no-op: it just
+      // echoes the overlay's own width back). So every expression below uses
+      // `iw`/`ih` to mean "the running video pad's current size".
+      //
+      // `blendMode == 'normal'` composites with a plain, positioned
+      // `overlay` (opacity faked via `colorchannelmixer=aa=`, since `overlay`
+      // has no opacity option of its own) — this is the only mode that
+      // honours [VideoOverlay.scale]/[posX]/[posY]/[rotation]. Every other
+      // mode uses ffmpeg's `blend=all_mode=<mode>:all_opacity=<opacity>`
+      // instead (verified against a real local ffmpeg 8.0: `blend` supports
+      // the same `enable` timeline windowing `overlay` does), which requires
+      // both inputs to share exactly one size — so a non-normal blend mode
+      // stretches the overlay to the *full* current canvas rather than
+      // honouring scale/position/rotation. This is a deliberate, documented
+      // simplification (see docs/CAPCUT-SPEC.md): every blend mode and
+      // opacity visibly work, just without independent PiP framing.
+      //
+      // Fully additive: an empty [videoOverlays] (the default) never writes
+      // any of this stage, so the graph is byte-for-byte what it was before
+      // this feature existed.
+      final overlayAudioLabels = <String>[];
+      for (var i = 0; i < videoOverlays.length; i++) {
+        final overlay = videoOverlays[i];
+        inputArgs.addAll([
+          '-ss', overlay.inPoint.toStringAsFixed(3),
+          '-to', overlay.outPoint.toStringAsFixed(3),
+          '-i', overlay.sourcePath,
+        ]);
+        final voInput = nextInputIndex++;
+
+        final fmtLabel = '[vofmt$i]';
+        filter.write(';[$voInput:v:0]format=rgba,setpts=PTS-STARTPTS+'
+            '${_fmtFilterNum(overlay.startTime)}/TB$fmtLabel');
+
+        final isBlend = overlay.blendMode != 'normal';
+        final scaledLabel = '[vosc$i]';
+        final refLabel = '[voref$i]';
+        final sizeExpr = isBlend
+            ? "w='iw':h='ih'"
+            : "w='iw*${_fmtFilterNum(overlay.scale)}':h=-2";
+        filter.write(
+            ';$fmtLabel${videoLabel}scale2ref=$sizeExpr$scaledLabel$refLabel');
+        videoLabel = refLabel;
+
+        var overlayPad = scaledLabel;
+        if (!isBlend && overlay.rotation != 0) {
+          final radians = overlay.rotation * 3.141592653589793 / 180.0;
+          final rotLabel = '[vorot$i]';
+          filter.write(';${overlayPad}rotate=${_fmtFilterNum(radians)}:'
+              'ow=rotw(${_fmtFilterNum(radians)}):'
+              'oh=roth(${_fmtFilterNum(radians)}):c=none$rotLabel');
+          overlayPad = rotLabel;
+        }
+
+        final opacity = overlay.opacity.clamp(0.0, 1.0);
+        if (!isBlend && opacity < 1.0) {
+          final opLabel = '[voop$i]';
+          filter.write(
+              ';${overlayPad}colorchannelmixer=aa=${_fmtFilterNum(opacity)}$opLabel');
+          overlayPad = opLabel;
+        }
+
+        final windowEnd = overlay.startTime + overlay.duration;
+        final enable =
+            "enable='between(t,${overlay.startTime.toStringAsFixed(3)},"
+            "${windowEnd.toStringAsFixed(3)})'";
+        final nextLabel = '[vo$i]';
+        if (isBlend) {
+          filter.write(';$videoLabel${overlayPad}blend=all_mode=${overlay.blendMode}:'
+              'all_opacity=${_fmtFilterNum(opacity)}:$enable$nextLabel');
+        } else {
+          filter.write(';$videoLabel${overlayPad}overlay=x='
+              "'main_w*${_fmtFilterNum(overlay.posX)}-overlay_w/2':y="
+              "'main_h*${_fmtFilterNum(overlay.posY)}-overlay_h/2':$enable$nextLabel");
+        }
+        videoLabel = nextLabel;
+
+        // Only reference this overlay's `:a:0` pad if its source actually
+        // has one — referencing a stream specifier that matches nothing
+        // aborts the *entire* filtergraph (`Stream specifier ... matches no
+        // streams`), so a video-only overlay must never be wired into the
+        // amix below.
+        if (await _probeHasAudio(overlay.sourcePath)) {
+          final alabel = 'voa$i';
+          final delayMs =
+              (overlay.startTime * 1000).clamp(0, double.infinity).round();
+          filter.write(';[$voInput:a:0]adelay=$delayMs:all=1[$alabel]');
+          overlayAudioLabels.add(alabel);
+        }
+      }
+
       // Mix in the project's audio lane: each AudioClip gets its own input
       // (trimmed the same way a video clip's is, via -ss/-to), a
       // volume/fade chain, then `adelay` to place it at its `start` on the
       // final timeline, then one `amix` combines all of them with the main
       // joined audio. `adelay=...:all=1` applies the same delay to every
       // channel without needing to know the source's channel count up front.
-      // Fully additive: an empty `audioClips` (the default) never writes any
-      // of this, so `audioLabel` stays exactly `[${joined.audio}]` — the
-      // graph export/renderPreview already produced before this feature
-      // existed.
+      // Fully additive: empty `audioClips` and `videoOverlays` (both default
+      // to empty) never write any of this, so `audioLabel` stays exactly
+      // `[${joined.audio}]` — the graph export/renderPreview already produced
+      // before either feature existed.
       var audioLabel = '[${joined.audio}]';
-      if (audioClips.isNotEmpty) {
+      if (audioClips.isNotEmpty || overlayAudioLabels.isNotEmpty) {
         final mixLabels = <String>[joined.audio];
         for (var i = 0; i < audioClips.length; i++) {
           final ac = audioClips[i];
@@ -583,6 +705,9 @@ class FfmpegEngine implements Engine {
           filter.write(';[$srcIndex:a:0]${chain.join(',')}[$label]');
           mixLabels.add(label);
         }
+        // The video-overlay stage above already built each overlay's own
+        // delayed audio pad (if its source has one) — just fold them in.
+        mixLabels.addAll(overlayAudioLabels);
         final mixedLabel = 'outmix';
         filter.write(
             ';${mixLabels.map((l) => '[$l]').join()}amix=inputs=${mixLabels.length}:duration=first:normalize=0[$mixedLabel]');
@@ -1055,6 +1180,27 @@ class FfmpegEngine implements Engine {
           'afade=t=out:st=${start.toStringAsFixed(3)}:d=${clip.fadeOut.toStringAsFixed(3)}');
     }
     return parts.isEmpty ? null : parts.join(',');
+  }
+
+  /// Probes whether [path] has at least one audio stream — used by the
+  /// video-overlay stage of [_buildFilterGraph] to decide whether an
+  /// overlay's `:a:0` pad may safely be referenced in the amix. Best-effort:
+  /// any probe failure (unreadable file, no ffprobe, etc.) is treated as "no
+  /// audio" rather than thrown, since the consequence is just that overlay
+  /// losing its own sound — never worth failing the whole export over.
+  Future<bool> _probeHasAudio(String path) async {
+    try {
+      final result = await Process.run(_ffprobe, [
+        '-v', 'error',
+        '-select_streams', 'a',
+        '-show_entries', 'stream=index',
+        '-of', 'csv=p=0',
+        path,
+      ]);
+      return result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Builds one `drawtext=...` filter clause (no surrounding `[in][out]`

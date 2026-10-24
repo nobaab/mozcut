@@ -13,6 +13,7 @@ import 'editor_shortcuts.dart';
 import 'export_dialog.dart';
 import '../view_models/sticker_overlays_view_model.dart';
 import '../view_models/text_overlays_view_model.dart';
+import '../view_models/video_overlays_view_model.dart';
 
 /// The top bar, modelled on CapCut: project name in the middle, and the row of
 /// actions on the right (Shortcuts, Pro, Share, Export). Back to the launcher is
@@ -118,6 +119,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
     final textOverlays = ref.read(textOverlaysProvider);
     final stickerOverlays = ref.read(stickerOverlaysProvider);
     final audioClips = ref.read(audioClipsProvider);
+    final videoOverlays = ref.read(videoOverlaysProvider);
     final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
     final progress = ref.read(exportProgressProvider.notifier);
     progress.set(0);
@@ -129,6 +131,7 @@ class EditorTitleBar extends ConsumerWidget implements PreferredSizeWidget {
           textOverlays: textOverlays,
           stickerOverlays: stickerOverlays,
           audioClips: audioClips,
+          videoOverlays: videoOverlays,
           canvasWidth: canvas.width,
           canvasHeight: canvas.height,
           onProgress: progress.set);

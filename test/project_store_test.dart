@@ -10,6 +10,7 @@ import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/project.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/domain/models/video_overlay.dart';
 import 'package:mozcut/data/project/project_store.dart';
 
 /// Points path_provider at a temp dir so the recents file lands somewhere real.
@@ -35,6 +36,7 @@ class _NoEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,
@@ -45,6 +47,7 @@ class _NoEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,

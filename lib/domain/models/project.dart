@@ -2,6 +2,7 @@ import 'audio_clip.dart';
 import 'clip.dart';
 import 'sticker_overlay.dart';
 import 'text_overlay.dart';
+import 'video_overlay.dart';
 
 /// The output format of a project — the decisions the whole edit depends on.
 class VideoSettings {
@@ -42,12 +43,14 @@ class Project {
     List<TextOverlay>? textOverlays,
     List<StickerOverlay>? stickerOverlays,
     List<AudioClip>? audioClips,
+    List<VideoOverlay>? videoOverlays,
     int? createdAt,
     int? modifiedAt,
   })  : clips = clips ?? [],
         textOverlays = textOverlays ?? [],
         stickerOverlays = stickerOverlays ?? [],
         audioClips = audioClips ?? [],
+        videoOverlays = videoOverlays ?? [],
         createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch,
         modifiedAt = modifiedAt ?? DateTime.now().millisecondsSinceEpoch;
 
@@ -72,6 +75,12 @@ class Project {
   /// live at the project level rather than on a clip — same reasoning as
   /// [textOverlays]/[stickerOverlays].
   List<AudioClip> audioClips;
+
+  /// Video overlays on the project's picture-in-picture lane, timed on the
+  /// final concatenated timeline (`VideoOverlay.startTime`). See
+  /// [VideoOverlay] for why these live at the project level rather than on a
+  /// clip — same reasoning as [textOverlays]/[stickerOverlays]/[audioClips].
+  List<VideoOverlay> videoOverlays;
   final int createdAt;
   int modifiedAt;
 
@@ -86,6 +95,7 @@ class Project {
         'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
         'stickerOverlays': stickerOverlays.map((s) => s.toJson()).toList(),
         'audioClips': audioClips.map((a) => a.toJson()).toList(),
+        'videoOverlays': videoOverlays.map((v) => v.toJson()).toList(),
         'createdAt': createdAt,
         'modifiedAt': modifiedAt,
       };
@@ -114,6 +124,11 @@ class Project {
         // to an empty list, so opening an old project is unaffected.
         audioClips: (j['audioClips'] as List? ?? [])
             .map((e) => AudioClip.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        // Absent in manifests written before this feature existed — defaults
+        // to an empty list, so opening an old project is unaffected.
+        videoOverlays: (j['videoOverlays'] as List? ?? [])
+            .map((e) => VideoOverlay.fromJson(e as Map<String, dynamic>))
             .toList(),
         createdAt: (j['createdAt'] as num?)?.toInt(),
         modifiedAt: (j['modifiedAt'] as num?)?.toInt(),

@@ -8,8 +8,10 @@ import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/domain/models/video_overlay.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_ui_state.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
+import 'package:mozcut/ui/features/editor/view_models/video_overlays_view_model.dart';
 import 'package:mozcut/ui/features/editor/views/timeline_panel.dart';
 
 /// A stand-in engine so UI tests never touch ffmpeg.
@@ -28,6 +30,7 @@ class FakeEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,
@@ -39,6 +42,7 @@ class FakeEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,
@@ -125,6 +129,38 @@ void main() {
     // Selected clip should be highlighted — state wiring works.
     expect(container.read(editorProvider).selected?.fileName, 'holiday.mp4');
     expect(container.read(editorProvider).clips.first.duration, 12.0);
+  });
+
+  testWidgets('adding a video overlay renders a bar on the overlay lane',
+      (tester) async {
+    final container = ProviderContainer(
+      overrides: [engineProvider.overrideWithValue(FakeEngine())],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: TimelinePanel())),
+      ),
+    );
+
+    await container
+        .read(videoOverlaysProvider.notifier)
+        .addFromPath('/Users/x/My Videos/pip.mp4', startTime: 2.0);
+    await tester.pump();
+
+    // The overlay appears as its own bar on the overlay lane, named, and is
+    // tracked independently of the (empty) main track/audio lane.
+    expect(find.text('pip.mp4'), findsOneWidget);
+    expect(container.read(videoOverlaysProvider).first.startTime, 2.0);
+
+    // Tapping it selects it on the overlay lane (same tap-to-select idiom
+    // as a main-track clip and an audio-lane clip).
+    await tester.tap(find.text('pip.mp4'));
+    await tester.pump();
+    expect(container.read(selectedVideoOverlayProvider),
+        container.read(videoOverlaysProvider).first.id);
   });
 
   testWidgets('split turns one clip into two bars', (tester) async {

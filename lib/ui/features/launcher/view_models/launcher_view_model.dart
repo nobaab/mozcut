@@ -6,6 +6,7 @@ import '../../editor/view_models/audio_clips_view_model.dart';
 import '../../editor/view_models/editor_view_model.dart';
 import '../../editor/view_models/sticker_overlays_view_model.dart';
 import '../../editor/view_models/text_overlays_view_model.dart';
+import '../../editor/view_models/video_overlays_view_model.dart';
 
 part 'launcher_view_model.g.dart';
 
@@ -52,6 +53,7 @@ class App extends _$App {
       textOverlays: project.textOverlays,
       stickerOverlays: project.stickerOverlays,
       audioClips: project.audioClips,
+      videoOverlays: project.videoOverlays,
       createdAt: project.createdAt,
       modifiedAt: project.modifiedAt,
     );
@@ -73,6 +75,7 @@ class App extends _$App {
     project.textOverlays = ref.read(textOverlaysProvider);
     project.stickerOverlays = ref.read(stickerOverlaysProvider);
     project.audioClips = ref.read(audioClipsProvider);
+    project.videoOverlays = ref.read(videoOverlaysProvider);
     await _store.save(project);
   }
 
@@ -86,6 +89,7 @@ class App extends _$App {
     ref.read(textOverlaysProvider.notifier).load(project.textOverlays);
     ref.read(stickerOverlaysProvider.notifier).load(project.stickerOverlays);
     ref.read(audioClipsProvider.notifier).load(project.audioClips);
+    ref.read(videoOverlaysProvider.notifier).load(project.videoOverlays);
     state = project;
   }
 }
