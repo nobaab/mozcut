@@ -1,10 +1,13 @@
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../domain/models/media_type.dart';
 import '../../../core/app_colors.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
+import '../view_models/media_import.dart';
 import 'audio_panel.dart';
 import 'captions_panel.dart';
 import 'effects_panel.dart';
@@ -101,11 +104,58 @@ class _SubRailItem extends StatelessWidget {
   }
 }
 
-class _MediaGridArea extends ConsumerWidget {
+class _MediaGridArea extends ConsumerStatefulWidget {
   const _MediaGridArea();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_MediaGridArea> createState() => _MediaGridAreaState();
+}
+
+class _MediaGridAreaState extends ConsumerState<_MediaGridArea> {
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _dragging = true),
+      onDragExited: (_) => setState(() => _dragging = false),
+      onDragDone: (details) async {
+        setState(() => _dragging = false);
+        await importMediaPaths(
+          ref,
+          details.files.map((f) => f.path),
+          onError: (message) {
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(message)));
+          },
+        );
+      },
+      child: Stack(
+        children: [
+          _buildContent(context, ref),
+          if (_dragging)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.12),
+                    border: Border.all(color: AppColors.accent, width: 2),
+                  ),
+                  child: const Center(
+                    child: Text('Drop to import',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 14)),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, WidgetRef ref) {
     final state = ref.watch(editorProvider);
 
     return Column(
@@ -167,7 +217,9 @@ class _MediaGridArea extends ConsumerWidget {
         Expanded(
           child: state.clips.isEmpty
               ? Center(
-                  child: Text('No media yet.\nClick Import to add a video.',
+                  child: Text(
+                      'No media yet.\nClick Import or drop files to add '
+                      'video, images or audio.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.35))),
@@ -204,7 +256,10 @@ class _MediaGridArea extends ConsumerWidget {
                               child: Stack(
                                 children: [
                                   Center(
-                                      child: Icon(Icons.movie_outlined,
+                                      child: Icon(
+                                          clip.mediaType == MediaType.image
+                                              ? Icons.image_outlined
+                                              : Icons.movie_outlined,
                                           size: 22,
                                           color: Colors.white
                                               .withValues(alpha: 0.4))),
@@ -256,20 +311,18 @@ class _MediaGridArea extends ConsumerWidget {
     await FilePicker.skipEntitlementsChecks();
     final files = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'],
+      allowedExtensions: kImportableExtensions,
     );
-    for (final f in files) {
-      final path = f.path;
-      if (path == null) continue;
-      try {
-        await ref.read(editorProvider.notifier).addClip(path);
-      } catch (e) {
+    await importMediaPaths(
+      ref,
+      files.map((f) => f.path).whereType<String>(),
+      onError: (message) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Could not import ${f.name}: $e')));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(message)));
         }
-      }
-    }
+      },
+    );
   }
 }
 

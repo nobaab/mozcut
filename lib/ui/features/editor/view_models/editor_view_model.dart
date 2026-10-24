@@ -3,6 +3,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../../data/engine/ffmpeg_engine.dart';
 import '../../../../domain/models/caption.dart';
 import '../../../../domain/models/clip.dart';
+import '../../../../domain/models/media_type.dart';
 
 part 'editor_view_model.g.dart';
 
@@ -109,9 +110,27 @@ class Editor extends _$Editor {
     );
   }
 
+  /// Adds [path] as a new clip on the main track. Video files are probed for
+  /// their real duration, same as always. Image files have no intrinsic
+  /// duration, so they become a fixed-length still clip instead (see
+  /// [kImageDefaultDuration]/[kImageSourceDurationCap]) without needing
+  /// ffprobe at all. Audio files are not handled here — callers should route
+  /// those to `AudioClips.addFromPath` instead (see `browser_panel.dart`'s
+  /// import routing).
   Future<void> addClip(String path) async {
-    final duration = await ref.read(engineProvider).probeDuration(path);
-    final clip = Clip(sourcePath: path, sourceDuration: duration);
+    final type = mediaTypeForPath(path);
+    final Clip clip;
+    if (type == MediaType.image) {
+      clip = Clip(
+        sourcePath: path,
+        sourceDuration: kImageSourceDurationCap,
+        outPoint: kImageDefaultDuration,
+        mediaType: MediaType.image,
+      );
+    } else {
+      final duration = await ref.read(engineProvider).probeDuration(path);
+      clip = Clip(sourcePath: path, sourceDuration: duration, mediaType: type);
+    }
     _mutate((s) => s.copyWith(
           clips: [...s.clips, clip],
           selectedId: clip.id,

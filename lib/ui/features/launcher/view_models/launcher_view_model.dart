@@ -2,6 +2,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../../../data/project/project_store.dart';
 import '../../../../domain/models/project.dart';
+import '../../editor/view_models/audio_clips_view_model.dart';
 import '../../editor/view_models/editor_view_model.dart';
 import '../../editor/view_models/sticker_overlays_view_model.dart';
 import '../../editor/view_models/text_overlays_view_model.dart';
@@ -50,6 +51,7 @@ class App extends _$App {
       clips: project.clips,
       textOverlays: project.textOverlays,
       stickerOverlays: project.stickerOverlays,
+      audioClips: project.audioClips,
       createdAt: project.createdAt,
       modifiedAt: project.modifiedAt,
     );
@@ -70,6 +72,7 @@ class App extends _$App {
     project.clips = ref.read(editorProvider).clips;
     project.textOverlays = ref.read(textOverlaysProvider);
     project.stickerOverlays = ref.read(stickerOverlaysProvider);
+    project.audioClips = ref.read(audioClipsProvider);
     await _store.save(project);
   }
 
@@ -82,6 +85,7 @@ class App extends _$App {
     ref.read(editorProvider.notifier).loadClips(project.clips);
     ref.read(textOverlaysProvider.notifier).load(project.textOverlays);
     ref.read(stickerOverlaysProvider.notifier).load(project.stickerOverlays);
+    ref.read(audioClipsProvider.notifier).load(project.audioClips);
     state = project;
   }
 }

@@ -1,8 +1,19 @@
 import 'package:uuid/uuid.dart';
 
 import 'caption.dart';
+import 'media_type.dart';
 
 const _uuid = Uuid();
+
+/// Default timeline length given to a freshly-imported image clip — an image
+/// has no intrinsic duration, so this is the trimmable starting point (see
+/// [Clip.mediaType]).
+const kImageDefaultDuration = 5.0;
+
+/// The `sourceDuration` recorded for an image clip: a large cap rather than a
+/// real media length (images have none), so [Clip.outPoint] can be trimmed
+/// out to a full day without ever hitting the clamp.
+const kImageSourceDurationCap = 86400.0;
 
 /// One piece of media on the timeline.
 ///
@@ -34,7 +45,9 @@ class Clip {
     this.transitionId,
     double? transitionDuration,
     this.originalSourcePath,
+    MediaType? mediaType,
   })  : id = id ?? _uuid.v4(),
+        mediaType = mediaType ?? MediaType.video,
         inPoint = inPoint ?? 0,
         outPoint = outPoint ?? sourceDuration,
         captions = captions ?? const [],
@@ -169,6 +182,19 @@ class Clip {
   /// always goes all the way back.
   String? originalSourcePath;
 
+  // ── media type ──
+
+  /// What kind of source file [sourcePath] is. Video is the default (and the
+  /// only value every clip created before this feature existed has) —
+  /// [MediaType.image] marks a still image placed as a timed clip on the
+  /// main track (see [kImageDefaultDuration]/[kImageSourceDurationCap] and
+  /// `FfmpegEngine._buildFilterGraph`'s `-loop 1` input handling).
+  /// [MediaType.audio] never appears here — imported audio becomes an
+  /// `AudioClip` on the project's audio lane instead.
+  final MediaType mediaType;
+
+  bool get isImage => mediaType == MediaType.image;
+
   /// Length this clip contributes to the timeline, in seconds: the trimmed
   /// source region (clamped to source bounds) divided by [speed].
   double get duration =>
@@ -203,6 +229,7 @@ class Clip {
     double? transitionDuration,
     String? originalSourcePath,
     bool clearOriginalSourcePath = false,
+    MediaType? mediaType,
   }) =>
       Clip(
         id: id,
@@ -232,6 +259,7 @@ class Clip {
         originalSourcePath: clearOriginalSourcePath
             ? null
             : (originalSourcePath ?? this.originalSourcePath),
+        mediaType: mediaType ?? this.mediaType,
       );
 
   Map<String, dynamic> toJson() => {
@@ -258,6 +286,7 @@ class Clip {
         'transitionId': transitionId,
         'transitionDuration': transitionDuration,
         'originalSourcePath': originalSourcePath,
+        'mediaType': mediaType.toJson(),
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -288,5 +317,6 @@ class Clip {
         transitionId: json['transitionId'] as String?,
         transitionDuration: (json['transitionDuration'] as num?)?.toDouble(),
         originalSourcePath: json['originalSourcePath'] as String?,
+        mediaType: MediaType.fromJson(json['mediaType'] as String?),
       );
 }
