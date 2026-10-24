@@ -101,6 +101,11 @@ class _VideoTab extends ConsumerWidget {
     final sub = ref.watch(videoSubProvider);
     final clip = ref.watch(editorProvider.select((s) => s.selected))!;
     final editor = ref.read(editorProvider.notifier);
+    // Clip-relative playhead (see Clip.valueAt / Editor.addKeyframeAtPlayhead)
+    // — watched so the Transform rows below live-update to the interpolated
+    // value as the playhead moves across an animated property.
+    final playhead = ref.watch(playheadProvider);
+    final t = (playhead - clip.inPoint).clamp(0.0, clip.duration);
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -127,12 +132,12 @@ class _VideoTab extends ConsumerWidget {
 
         if (sub == VideoSubTab.basic) ...[
           _SectionHeader('Transform'),
-          _scaleRow(editor, clip),
+          _scaleRow(editor, clip, t),
           // Scale is a single uniform factor (no separate X/Y scale), so
           // this toggle stays decorative — there is nothing to turn off.
           _toggleRow('Uniform scale', true),
-          _positionRow(editor, clip),
-          _rotateRow(editor, clip),
+          _positionRow(editor, clip, t),
+          _rotateRow(editor, clip, t),
           _flipRow(editor, clip),
           const SizedBox(height: 8),
           _alignRow(editor),
@@ -147,7 +152,7 @@ class _VideoTab extends ConsumerWidget {
           ),
           const SizedBox(height: 18),
           _SectionHeader('Blend', hasCheckbox: true),
-          _sliderRow('Opacity', 1.0, 0, 1, '100%'),
+          _opacityRow(editor, clip, t),
           _fieldRow('Blend mode', 'Normal'),
           const SizedBox(height: 18),
 
@@ -199,94 +204,173 @@ class _VideoTab extends ConsumerWidget {
     );
   }
 
-  // ── little rows (visual unless noted) ──
-  Widget _sliderRow(String label, double v, double min, double max, String r) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(children: [
-          SizedBox(width: 56, child: Text(label, style: _lbl)),
-          Expanded(
-              child: Slider(value: v, min: min, max: max, onChanged: (_) {})),
-          SizedBox(width: 44, child: Text(r, textAlign: TextAlign.right, style: _lbl)),
-        ]),
-      );
+  // ── keyframe diamond ──
+  // One per animatable property (Scale / Position / Rotate / Opacity — see
+  // docs/CAPCUT-SPEC.md §2.6). Tapping the diamond records the property's
+  // *current* value (interpolated if already animated) as a keyframe at the
+  // playhead; a filled diamond means the property has keyframes, and the
+  // small "x" next to it clears them all back to a static value. [properties]
+  // is normally a single `kKeyframe*` constant — Position passes both
+  // `posX`/`posY` so one diamond keyframes them together, matching CapCut's
+  // single "Position" parameter.
+  Widget _keyframeDiamond(Editor editor, Clip clip, List<String> properties) {
+    final hasKeyframes =
+        properties.any((p) => (clip.keyframes[p] ?? const []).isNotEmpty);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: () {
+            for (final p in properties) {
+              editor.addKeyframeAtPlayhead(p);
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Icon(
+              Icons.diamond,
+              size: 13,
+              color: hasKeyframes
+                  ? AppColors.accent
+                  : Colors.white.withValues(alpha: 0.3),
+            ),
+          ),
+        ),
+        if (hasKeyframes)
+          InkWell(
+            onTap: () {
+              for (final p in properties) {
+                editor.clearKeyframes(p);
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Icon(Icons.close,
+                  size: 11, color: Colors.white.withValues(alpha: 0.4)),
+            ),
+          ),
+      ],
+    );
+  }
 
   // ── Transform rows (wired to the selected clip) ──
 
   /// Scale: 0% .. 400%, 100% = clip's "fit to canvas" size (see
-  /// Clip.scale / FfmpegEngine's filter chain).
-  Widget _scaleRow(Editor editor, Clip clip) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(children: [
-          SizedBox(width: 56, child: Text('Scale', style: _lbl)),
-          Expanded(
-            child: Slider(
-              value: clip.scale.clamp(0.0, 4.0).toDouble(),
-              min: 0,
-              max: 4,
-              onChanged: (v) => editor.updateTransform(scale: v),
-            ),
+  /// Clip.scale / FfmpegEngine's filter chain). [t] is the clip-relative
+  /// playhead (see Clip.valueAt) — the displayed value is the interpolated
+  /// one if this property is animated.
+  Widget _scaleRow(Editor editor, Clip clip, double t) {
+    final value = clip.valueAt(kKeyframeScale, t);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        _keyframeDiamond(editor, clip, [kKeyframeScale]),
+        SizedBox(width: 44, child: Text('Scale', style: _lbl)),
+        Expanded(
+          child: Slider(
+            value: value.clamp(0.0, 4.0).toDouble(),
+            min: 0,
+            max: 4,
+            onChanged: (v) => editor.updateTransform(scale: v),
           ),
-          SizedBox(
-            width: 56,
-            child: _LiveField(
-              value: (clip.scale * 100).round().toString(),
-              suffix: '%',
-              onChanged: (text) {
-                final v = double.tryParse(text);
-                if (v != null) editor.updateTransform(scale: v / 100);
-              },
-            ),
+        ),
+        SizedBox(
+          width: 56,
+          child: _LiveField(
+            value: (value * 100).round().toString(),
+            suffix: '%',
+            onChanged: (text) {
+              final v = double.tryParse(text);
+              if (v != null) editor.updateTransform(scale: v / 100);
+            },
           ),
-        ]),
-      );
+        ),
+      ]),
+    );
+  }
 
   /// Position: posX/posY are normalized -1..1 (see Clip's doc comments),
-  /// shown here as a percentage of half the canvas for readability.
-  Widget _positionRow(Editor editor, Clip clip) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(children: [
-          SizedBox(width: 56, child: Text('Position', style: _lbl)),
-          Expanded(
-            child: _LiveField(
-              value: (clip.posX * 100).round().toString(),
-              prefix: 'X',
-              onChanged: (text) {
-                final v = double.tryParse(text);
-                if (v != null) editor.updateTransform(posX: v / 100);
-              },
-            ),
+  /// shown here as a percentage of half the canvas for readability. Both
+  /// axes share one keyframe diamond (see [_keyframeDiamond]).
+  Widget _positionRow(Editor editor, Clip clip, double t) {
+    final x = clip.valueAt(kKeyframePosX, t);
+    final y = clip.valueAt(kKeyframePosY, t);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        _keyframeDiamond(editor, clip, [kKeyframePosX, kKeyframePosY]),
+        SizedBox(width: 56, child: Text('Position', style: _lbl)),
+        Expanded(
+          child: _LiveField(
+            value: (x * 100).round().toString(),
+            prefix: 'X',
+            onChanged: (text) {
+              final v = double.tryParse(text);
+              if (v != null) editor.updateTransform(posX: v / 100);
+            },
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _LiveField(
-              value: (clip.posY * 100).round().toString(),
-              prefix: 'Y',
-              onChanged: (text) {
-                final v = double.tryParse(text);
-                if (v != null) editor.updateTransform(posY: v / 100);
-              },
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _LiveField(
+            value: (y * 100).round().toString(),
+            prefix: 'Y',
+            onChanged: (text) {
+              final v = double.tryParse(text);
+              if (v != null) editor.updateTransform(posY: v / 100);
+            },
           ),
-        ]),
-      );
+        ),
+      ]),
+    );
+  }
 
-  Widget _rotateRow(Editor editor, Clip clip) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(children: [
-          SizedBox(width: 90, child: Text('Rotate', style: _lbl)),
-          Expanded(
-            child: _LiveField(
-              value: clip.rotation.round().toString(),
-              suffix: '°',
-              onChanged: (text) {
-                final v = double.tryParse(text);
-                if (v != null) editor.updateTransform(rotation: v);
-              },
-            ),
+  Widget _rotateRow(Editor editor, Clip clip, double t) {
+    final value = clip.valueAt(kKeyframeRotation, t);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        _keyframeDiamond(editor, clip, [kKeyframeRotation]),
+        SizedBox(width: 48, child: Text('Rotate', style: _lbl)),
+        Expanded(
+          child: _LiveField(
+            value: value.round().toString(),
+            suffix: '°',
+            onChanged: (text) {
+              final v = double.tryParse(text);
+              if (v != null) editor.updateTransform(rotation: v);
+            },
           ),
-        ]),
-      );
+        ),
+      ]),
+    );
+  }
+
+  /// Opacity: 0..100%, wired to [Clip.opacity] (previously a decorative
+  /// placeholder slider) and animatable via its own keyframe diamond.
+  Widget _opacityRow(Editor editor, Clip clip, double t) {
+    final value = clip.valueAt(kKeyframeOpacity, t);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        _keyframeDiamond(editor, clip, [kKeyframeOpacity]),
+        SizedBox(width: 44, child: Text('Opacity', style: _lbl)),
+        Expanded(
+          child: Slider(
+            value: value.clamp(0.0, 1.0).toDouble(),
+            min: 0,
+            max: 1,
+            onChanged: (v) => editor.updateTransform(opacity: v),
+          ),
+        ),
+        SizedBox(
+          width: 44,
+          child: Text('${(value * 100).round()}%',
+              textAlign: TextAlign.right, style: _lbl),
+        ),
+      ]),
+    );
+  }
 
   Widget _flipRow(Editor editor, Clip clip) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),

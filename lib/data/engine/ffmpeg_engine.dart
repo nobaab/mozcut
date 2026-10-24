@@ -9,6 +9,7 @@ import '../../domain/models/clip.dart';
 import '../../domain/models/color_filter_presets.dart';
 import '../../domain/models/effect_presets.dart';
 import '../../domain/models/export_settings.dart';
+import '../../domain/models/keyframe.dart';
 import '../../domain/models/media_type.dart';
 import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
@@ -687,6 +688,19 @@ class FfmpegEngine implements Engine {
     final fg = 'fg$i';
     final out = 'v$i';
 
+    // Keyframes for the four animatable transform properties (see
+    // domain/models/keyframe.dart and docs/CAPCUT-SPEC.md §2.6). A list with
+    // fewer than 2 entries can't be "animated" (0 = use the clip's own
+    // field; 1 = that single keyframe just pins a constant value) — only
+    // those get a real time-based ffmpeg expression. This is what keeps an
+    // unanimated clip's filtergraph byte-identical to before this feature
+    // existed.
+    final kfScale = clip.keyframes[kKeyframeScale] ?? const <Keyframe>[];
+    final kfPosX = clip.keyframes[kKeyframePosX] ?? const <Keyframe>[];
+    final kfPosY = clip.keyframes[kKeyframePosY] ?? const <Keyframe>[];
+    final kfRotation = clip.keyframes[kKeyframeRotation] ?? const <Keyframe>[];
+    final kfOpacity = clip.keyframes[kKeyframeOpacity] ?? const <Keyframe>[];
+
     // 1. A black canvas-sized background. `color` is a zero-input source
     // filter — no extra `-i` needed. It's infinite; `overlay`'s shortest=1
     // below trims the result to the (finite) foreground's duration.
@@ -700,17 +714,47 @@ class FfmpegEngine implements Engine {
     // own `scale` on top of that fit, then flip/rotate.
     final steps = <String>[
       'scale=w=$canvasWidth:h=$canvasHeight:force_original_aspect_ratio=decrease',
-      // trunc(.../2)*2 keeps dimensions even, which libx264 requires.
-      "scale=w='trunc(iw*${clip.scale}/2)*2':h='trunc(ih*${clip.scale}/2)*2'",
     ];
+    if (kfScale.length < 2) {
+      // trunc(.../2)*2 keeps dimensions even, which libx264 requires.
+      final scaleValue = kfScale.isEmpty ? clip.scale : kfScale.single.value;
+      steps.add(
+        "scale=w='trunc(iw*$scaleValue/2)*2':h='trunc(ih*$scaleValue/2)*2'",
+      );
+    } else {
+      // `eval=frame` makes ffmpeg re-evaluate w/h (and therefore resize)
+      // every frame instead of once at init — confirmed against a real
+      // ffmpeg build (8.0) that `overlay` downstream handles a per-frame
+      // varying foreground size correctly (it re-centers on the current
+      // frame's w/h each time, same as it already does for a static size).
+      final expr = _piecewiseTimeExpr(kfScale, 't');
+      steps.add(
+        "scale=w='trunc(iw*($expr)/2)*2':h='trunc(ih*($expr)/2)*2':eval=frame",
+      );
+    }
     if (clip.flipH) steps.add('hflip');
-    if (clip.rotation != 0) {
-      final radians = clip.rotation * 3.141592653589793 / 180.0;
-      // Expands the bounding box to fit the rotated frame (rotw()/roth()
-      // are ffmpeg's rotate-filter helper functions for exactly this —
-      // the bare `rotw`/`roth` constants only exist inside them); the
-      // corners this exposes are filled black, matching the background.
-      steps.add('rotate=$radians:ow=rotw($radians):oh=roth($radians):c=black');
+    if (kfRotation.length < 2) {
+      final degrees = kfRotation.isEmpty ? clip.rotation : kfRotation.single.value;
+      if (degrees != 0) {
+        final radians = degrees * 3.141592653589793 / 180.0;
+        // Expands the bounding box to fit the rotated frame (rotw()/roth()
+        // are ffmpeg's rotate-filter helper functions for exactly this —
+        // the bare `rotw`/`roth` constants only exist inside them); the
+        // corners this exposes are filled black, matching the background.
+        steps.add(
+            'rotate=$radians:ow=rotw($radians):oh=roth($radians):c=black');
+      }
+    } else {
+      // rotw()/roth() can't self-reference an animated `a` expression (they
+      // only resolve against a literal angle), so the bounding box is fixed
+      // to the frame's diagonal instead — always big enough for any angle
+      // the animation reaches, padded with black (matching the canvas
+      // background) rather than cropping at some angles.
+      final degExpr = _piecewiseTimeExpr(kfRotation, 't');
+      const degToRad = 0.017453292519943295;
+      steps.add(
+        "rotate=a='($degExpr)*$degToRad':ow='hypot(iw,ih)':oh='hypot(iw,ih)':c=black",
+      );
     }
     // ── color / filter ──
     // Preset look first (the "base grade"), then the user's manual
@@ -740,20 +784,87 @@ class FfmpegEngine implements Engine {
         clip.effectId == null ? null : kEffectPresets[clip.effectId];
     if (effect != null) steps.add(effect);
 
+    // ── opacity ──
+    // Applied last, over the already colour/effect-graded frame. No-op by
+    // default (opacity 1.0, no keyframes), so a default clip produces
+    // exactly the filter chain it did before this feature existed.
+    if (kfOpacity.length < 2) {
+      final opacityValue =
+          (kfOpacity.isEmpty ? clip.opacity : kfOpacity.single.value)
+              .clamp(0.0, 1.0);
+      if (opacityValue < 1.0) {
+        // `colorchannelmixer=aa=` scales the alpha channel's gain — cheap
+        // (no per-pixel expression evaluation) since the value never
+        // changes within this clip.
+        steps.add('format=yuva420p');
+        steps.add('colorchannelmixer=aa=${_fmtFilterNum(opacityValue)}');
+      }
+    } else {
+      // `colorchannelmixer`'s options aren't re-evaluated per frame, so a
+      // genuinely time-varying alpha needs `geq` instead: it rebuilds the
+      // frame pixel-by-pixel, but exposes `lum(X,Y)`/`cb(X,Y)`/`cr(X,Y)` to
+      // pass the existing picture through unchanged while computing a fresh
+      // alpha plane from `T` (geq's own per-pixel expression language uses
+      // uppercase `T` for the frame time, unlike every other filter here).
+      final expr = _piecewiseTimeExpr(kfOpacity, 'T');
+      steps.add('format=yuva420p');
+      steps.add(
+        "geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='($expr)*255'",
+      );
+    }
+
     filter.write('[$inputIndex:v:0]${steps.join(',')}[$fg];');
 
     // 3. Composite the foreground onto the background, offset from center
     // by posX/posY (fractions of half the canvas size — see Clip's doc
     // comments). `overlay` clips anything outside the canvas automatically,
     // so a scale > 1 ("zoomed in") frame is cropped rather than erroring.
-    final offsetX = clip.posX * canvasWidth / 2;
-    final offsetY = clip.posY * canvasHeight / 2;
+    final String offsetXExpr;
+    if (kfPosX.length < 2) {
+      final v = kfPosX.isEmpty ? clip.posX : kfPosX.single.value;
+      offsetXExpr = '${v * canvasWidth / 2}';
+    } else {
+      offsetXExpr = '(${_piecewiseTimeExpr(kfPosX, 't')})*$canvasWidth/2';
+    }
+    final String offsetYExpr;
+    if (kfPosY.length < 2) {
+      final v = kfPosY.isEmpty ? clip.posY : kfPosY.single.value;
+      offsetYExpr = '${v * canvasHeight / 2}';
+    } else {
+      offsetYExpr = '(${_piecewiseTimeExpr(kfPosY, 't')})*$canvasHeight/2';
+    }
     filter.write(
-      "[$bg][$fg]overlay=x='(W-w)/2+($offsetX)':y='(H-h)/2+($offsetY)':"
+      "[$bg][$fg]overlay=x='(W-w)/2+($offsetXExpr)':y='(H-h)/2+($offsetYExpr)':"
       "shortest=1,setsar=1,format=yuv420p[$out];",
     );
 
     return out;
+  }
+
+  /// Builds a piecewise-linear ffmpeg filtergraph expression reproducing
+  /// [keyframeValueAt] for [keyframes] (which must have at least 2 entries —
+  /// callers handle 0/1 as a static value instead), in terms of [timeVar]
+  /// (the current filter's own time variable: lowercase `t` for
+  /// `overlay`/`scale`/`rotate`, but uppercase `T` inside `geq`, whose
+  /// per-pixel expression language reserves lowercase `t` for something
+  /// else). Before the first keyframe / after the last, the value clamps
+  /// (no extrapolation) — same semantics as [keyframeValueAt].
+  static String _piecewiseTimeExpr(List<Keyframe> keyframes, String timeVar) {
+    final sorted = List<Keyframe>.of(keyframes)
+      ..sort((a, b) => a.timeSec.compareTo(b.timeSec));
+    var expr = _fmtFilterNum(sorted.last.value);
+    for (var k = sorted.length - 2; k >= 0; k--) {
+      final a = sorted[k];
+      final b = sorted[k + 1];
+      final span = b.timeSec - a.timeSec;
+      final segment = span.abs() < 1e-9
+          ? _fmtFilterNum(b.value)
+          : '(${_fmtFilterNum(a.value)}+($timeVar-${_fmtFilterNum(a.timeSec)})'
+              '*${_fmtFilterNum(b.value - a.value)}/${_fmtFilterNum(span)})';
+      expr = 'if(lt($timeVar,${_fmtFilterNum(b.timeSec)}),$segment,$expr)';
+    }
+    return 'if(lt($timeVar,${_fmtFilterNum(sorted.first.timeSec)}),'
+        '${_fmtFilterNum(sorted.first.value)},$expr)';
   }
 
   /// Builds the `volume`/`afade` filter chain for [clip]'s audio, or `null`

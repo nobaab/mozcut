@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mozcut/domain/models/clip.dart';
+import 'package:mozcut/domain/models/keyframe.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
 
 /// Covers the timeline-interaction additions to the [Editor] notifier:
@@ -506,6 +507,113 @@ void main() {
       editor.removeSelected();
       editor.removeSelected();
       expect(() => editor.setSelectedTransition('Dissolve'), returnsNormally);
+    });
+  });
+
+  group('keyframes', () {
+    test('addKeyframe records a keyframe on the selected clip', () {
+      editor.addKeyframe(kKeyframeScale, 1.0, 2.0);
+      expect(clipAt(0).keyframes[kKeyframeScale],
+          [const Keyframe(timeSec: 1.0, value: 2.0)]);
+    });
+
+    test('addKeyframe at an existing time replaces it instead of '
+        'duplicating', () {
+      editor.addKeyframe(kKeyframeScale, 1.0, 2.0);
+      editor.addKeyframe(kKeyframeScale, 1.0, 5.0);
+      expect(clipAt(0).keyframes[kKeyframeScale],
+          [const Keyframe(timeSec: 1.0, value: 5.0)]);
+    });
+
+    test('addKeyframe keeps the list sorted by time regardless of '
+        'insertion order', () {
+      editor.addKeyframe(kKeyframeRotation, 2.0, 90.0);
+      editor.addKeyframe(kKeyframeRotation, 0.0, 0.0);
+      editor.addKeyframe(kKeyframeRotation, 1.0, 45.0);
+      final times =
+          clipAt(0).keyframes[kKeyframeRotation]!.map((k) => k.timeSec);
+      expect(times, [0.0, 1.0, 2.0]);
+    });
+
+    test('does not affect other clips', () {
+      editor.addKeyframe(kKeyframeScale, 1.0, 2.0);
+      expect(clipAt(1).keyframes[kKeyframeScale], isNull);
+    });
+
+    test('is undoable', () {
+      editor.addKeyframe(kKeyframeScale, 1.0, 2.0);
+      editor.undo();
+      expect(clipAt(0).keyframes[kKeyframeScale] ?? const [], isEmpty);
+    });
+
+    test('removeKeyframe drops the keyframe nearest the given time', () {
+      editor.addKeyframe(kKeyframePosX, 0.0, 0.1);
+      editor.addKeyframe(kKeyframePosX, 1.0, 0.5);
+      editor.removeKeyframe(kKeyframePosX, 0.0);
+      expect(clipAt(0).keyframes[kKeyframePosX],
+          [const Keyframe(timeSec: 1.0, value: 0.5)]);
+    });
+
+    test('removeKeyframe on an unknown time is a no-op', () {
+      editor.addKeyframe(kKeyframePosX, 0.0, 0.1);
+      editor.removeKeyframe(kKeyframePosX, 99.0);
+      expect(clipAt(0).keyframes[kKeyframePosX]!.length, 1);
+    });
+
+    test('removeKeyframe drops the map entry once the list is empty', () {
+      editor.addKeyframe(kKeyframePosX, 0.0, 0.1);
+      editor.removeKeyframe(kKeyframePosX, 0.0);
+      expect(clipAt(0).keyframes.containsKey(kKeyframePosX), isFalse);
+    });
+
+    test('clearKeyframes removes every keyframe for the property', () {
+      editor.addKeyframe(kKeyframeOpacity, 0.0, 0.0);
+      editor.addKeyframe(kKeyframeOpacity, 1.0, 1.0);
+      editor.clearKeyframes(kKeyframeOpacity);
+      expect(clipAt(0).keyframes.containsKey(kKeyframeOpacity), isFalse);
+    });
+
+    test('clearKeyframes leaves other properties untouched', () {
+      editor.addKeyframe(kKeyframeOpacity, 0.0, 0.0);
+      editor.addKeyframe(kKeyframeScale, 0.0, 1.5);
+      editor.clearKeyframes(kKeyframeOpacity);
+      expect(clipAt(0).keyframes.containsKey(kKeyframeScale), isTrue);
+    });
+
+    test('addKeyframeAtPlayhead records the clip-relative playhead time '
+        'and current static value', () {
+      editor.setTrim(clipAt(0).id, inPoint: 2);
+      container.read(playheadProvider.notifier).set(5); // source seconds
+      editor.updateTransform(scale: 3.0);
+      editor.addKeyframeAtPlayhead(kKeyframeScale);
+      // clip-relative = playhead(5) - inPoint(2) = 3
+      expect(clipAt(0).keyframes[kKeyframeScale],
+          [const Keyframe(timeSec: 3.0, value: 3.0)]);
+    });
+
+    test('updateTransform writes into keyframes instead of the static '
+        'field once a property is animated', () {
+      editor.addKeyframe(kKeyframeScale, 0.0, 1.0);
+      container.read(playheadProvider.notifier).set(2); // clip-relative 2
+      editor.updateTransform(scale: 4.0);
+
+      final clip = clipAt(0);
+      // The static field is untouched...
+      expect(clip.scale, 1.0);
+      // ...but a new keyframe appeared at the playhead with the new value.
+      expect(clip.keyframes[kKeyframeScale], [
+        const Keyframe(timeSec: 0.0, value: 1.0),
+        const Keyframe(timeSec: 2.0, value: 4.0),
+      ]);
+    });
+
+    test('updateTransform still writes the static field for a property '
+        'with no keyframes', () {
+      editor.addKeyframe(kKeyframeScale, 0.0, 1.0);
+      editor.updateTransform(scale: 4.0, rotation: 30.0);
+
+      expect(clipAt(0).rotation, 30.0);
+      expect(clipAt(0).keyframes.containsKey(kKeyframeRotation), isFalse);
     });
   });
 }
