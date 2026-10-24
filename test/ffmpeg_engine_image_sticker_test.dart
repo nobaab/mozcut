@@ -63,16 +63,16 @@ void main() {
 
     final filter = capturedFilter(args);
     expect(filter, contains('format=rgba'));
-    expect(filter, contains('scale2ref='));
     // The sticker's own `overlay` stage — distinct from the per-clip
     // bg/fg compositing `overlay` every export already has (which never
     // references `overlay_w`/`overlay_h`, only this stage does).
     expect(filter, contains('overlay_w/2'));
     expect(filter, contains('overlay_h/2'));
-    // Scaled to a fraction of the output height. On this ffmpeg `ih` is
-    // scale2ref's name for the *reference* (running video pad) height, so
-    // `ih*size` sizes the sticker to the canvas, not to its own pixels.
-    expect(filter, contains("ih*0.300000"));
+    // Scaled with a plain `scale` to absolute pixels: a fraction (0.3) of the
+    // canvas height (1080) = 324, aspect preserved via `-2`. (Plain `scale`,
+    // not `scale2ref`, to avoid the chained-scale2ref dead-lock.)
+    expect(filter, contains('scale=-2:324'));
+    expect(filter, isNot(contains('scale2ref=')));
     // Positioned at its own x/y anchor.
     expect(filter, contains('main_w*0.250000'));
     expect(filter, contains('main_h*0.600000'));

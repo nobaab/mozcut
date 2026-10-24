@@ -96,11 +96,11 @@ exit 0
     // Reset to pts 0, then shifted to appear at `startTime` on the output
     // timeline.
     expect(filter, contains('setpts=PTS-STARTPTS+2.000000/TB'));
-    // Scaled against the running video pad (resolution-independent).
-    expect(filter, contains('scale2ref='));
-    // `iw` is scale2ref's name for the *reference* (running video pad)'s
-    // width — see the production code's comment on why this isn't `main_w`.
-    expect(filter, contains("iw*0.400000"));
+    // Scaled with a plain `scale` to absolute pixels: a fraction (0.4) of the
+    // canvas width (1920) = 768, aspect preserved via `-2`. (Plain `scale`,
+    // not `scale2ref`, to avoid the chained-scale2ref dead-lock.)
+    expect(filter, contains('scale=768:-2'));
+    expect(filter, isNot(contains('scale2ref=')));
     // The overlay's own `overlay` stage — distinct from the per-clip
     // bg/fg compositing `overlay` every export already has (which never
     // references `overlay_w`/`overlay_h`, only this stage does).
@@ -197,8 +197,9 @@ exit 0
 
     final filter = capturedFilter(capturedArgs());
     expect(filter, contains('blend=all_mode=screen:all_opacity=0.800000'));
-    // Scaled to the full running canvas, not the overlay's own `scale`.
-    expect(filter, contains("w='iw':h='ih'"));
+    // Scaled to the full canvas (1920x1080), not the overlay's own `scale` —
+    // `blend` requires both inputs to be the same size.
+    expect(filter, contains('scale=1920:1080'));
     // Still windowed on the final timeline, same as the normal path.
     expect(filter, contains("enable='between(t,1.000,"));
     // A blend-mode overlay is never composited with the plain `overlay`
@@ -273,6 +274,11 @@ exit 0
     );
 
     final filter = capturedFilter(capturedArgs());
-    expect(filter, contains('scale2ref='));
+    // The overlay composites at canvas size (0.5 * 1920 = 960) and the preview
+    // proxy downscale (`scale=640:-2`) runs LAST, after the overlay — so a PiP
+    // appears in the preview at the same relative size it will in the export.
+    expect(filter, contains('scale=960:-2'));
+    expect(filter, contains('[vsfinal]'));
+    expect(filter.indexOf('overlay='), lessThan(filter.indexOf('[vsfinal]')));
   });
 }

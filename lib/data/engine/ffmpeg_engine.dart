@@ -185,6 +185,11 @@ class FfmpegEngine implements Engine {
         '-map', videoMapLabel,
         if (!isGif) ...['-map', graph.audioLabel],
         ...settings.toFfmpegArgs(),
+        // Bound the output to the timeline length. Overlays whose image is a
+        // looped still (`-loop 1` stickers) are infinite inputs, so without an
+        // explicit `-t` the mux would never terminate; the timeline duration
+        // is the only correct stop point regardless of which inputs are finite.
+        '-t', totalDuration.toStringAsFixed(3),
         '-progress', 'pipe:1',
         '-nostats',
         outputPath,
@@ -297,6 +302,9 @@ class FfmpegEngine implements Engine {
         '-preset', 'ultrafast',
         '-crf', '28',
         '-c:a', 'aac',
+        // See export(): bound to the timeline so looped-still overlay inputs
+        // (`-loop 1` stickers) can't make the preview render run forever.
+        '-t', totalDuration.toStringAsFixed(3),
         '-progress', 'pipe:1',
         '-nostats',
         outputPath,
@@ -433,23 +441,17 @@ class FfmpegEngine implements Engine {
       }
       final joined = _joinClips(filter, clips, videoLabels, audioLabels);
 
-      // Chain optional stages (resize, then subtitles) onto the joined
-      // output, each writing to a fresh label so the filtergraph stays a
-      // simple linear pipe no matter which stages are present.
+      // Chain optional stages onto the joined output, each writing to a fresh
+      // label so the filtergraph stays a simple linear pipe no matter which
+      // stages are present. NB: the optional resize ([scaleFilter]) is applied
+      // LAST, after captions and every overlay, so overlays composite against
+      // the full-resolution canvas pad (see the final-resize block below).
       var videoLabel = '[${joined.video}]';
-      var nextLabelIndex = 1;
-      if (scaleFilter != null) {
-        final outLabel = '[vs$nextLabelIndex]';
-        filter.write(';$videoLabel$scaleFilter$outLabel');
-        videoLabel = outLabel;
-        nextLabelIndex++;
-      }
       if (srtFile != null) {
-        final outLabel = '[vs$nextLabelIndex]';
+        const outLabel = '[vsub]';
         filter.write(
             ';${videoLabel}subtitles=${_escapeFilterPath(srtFile.path)}$outLabel');
         videoLabel = outLabel;
-        nextLabelIndex++;
       }
 
       // Burn in text/title overlays, one `drawtext` filter per overlay,
@@ -494,35 +496,27 @@ class FfmpegEngine implements Engine {
             // One extra `-i` input for this sticker's image (`-loop 1` so
             // it keeps producing frames for `overlay` to read for as long
             // as the output runs, the same convention an image *clip*
-            // input uses above, for the same reason). Scaled to `size` (a
-            // fraction of the output frame's *height*) via `scale2ref`,
-            // resolution-independent the same way `_drawtextFilter`'s
-            // `fontsize=h*fraction` is. Note `scale2ref`'s expression
-            // constants on this ffmpeg are the reverse of their names:
-            // `ih` is the *reference* (running video pad) height while
-            // `main_w`/`main_h` are the sticker image's *own* original
-            // dimensions — so `h='ih*size'` sizes to the live pad and the
-            // `main_w/main_h` factor on `w` preserves the image's aspect.
-            // `scale2ref`'s second output is the
-            // untouched video pad, which becomes the new running
-            // `videoLabel`. Optionally rotated (`c=none` keeps the corners
-            // exposed by rotation transparent instead of filling them),
-            // then composited with `overlay`, anchored at its `x`/`y`
-            // center, windowed with `enable='between(t,start,end)'` exactly
-            // like every other overlay on this timeline.
+            // input uses above, for the same reason — the output is bounded
+            // by the `-t` the caller adds, never by this infinite input).
+            // Scaled to `size` (a fraction of the frame *height*) with a plain
+            // `scale` to absolute pixels: the running pad is exactly
+            // [canvasWidth]x[canvasHeight] at this point (the optional resize
+            // happens LAST, after every overlay), so pixels derived from the
+            // canvas are correct, and `scale=-2:h` preserves the image's own
+            // aspect. A plain `scale` is used instead of `scale2ref` on
+            // purpose: two chained `scale2ref` (one per sticker, one per PiP
+            // overlay) dead-lock this ffmpeg before it can emit a frame.
+            // Optionally rotated (`c=none` keeps the corners exposed by
+            // rotation transparent instead of filling them), then composited
+            // with `overlay`, anchored at its `x`/`y` center, windowed with
+            // `enable='between(t,start,end)'` like every other overlay.
             inputArgs.addAll(['-loop', '1', '-i', sticker.imagePath!]);
             final imgInput = nextInputIndex++;
 
-            final fmtLabel = '[stkfmt$i]';
-            filter.write(';[$imgInput:v]format=rgba$fmtLabel');
-
             final scaledLabel = '[stksc$i]';
-            final refLabel = '[stkref$i]';
-            final stkSz = _fmtFilterNum(sticker.size);
-            filter.write(';$fmtLabel${videoLabel}scale2ref='
-                "w='ih*$stkSz*main_w/main_h':h='ih*$stkSz'"
-                '$scaledLabel$refLabel');
-            videoLabel = refLabel;
+            final stkH = _evenPx(canvasHeight * sticker.size);
+            filter.write(
+                ';[$imgInput:v]format=rgba,scale=-2:$stkH$scaledLabel');
 
             var imagePad = scaledLabel;
             if (sticker.rotation != 0) {
@@ -583,31 +577,26 @@ class FfmpegEngine implements Engine {
       // *when* to apply the filter (via `enable`), it never shifts an
       // input's own timestamps, so without this shift the overlay would
       // always appear to start at t=0 regardless of `startTime`. Then scaled
-      // against the *running* video pad via `scale2ref` — resolution-
-      // independent the same way [StickerOverlay] burn-in is, since the
-      // reference's size is read from the actual pad at run time, not from
-      // [canvasWidth]/[canvasHeight] (correct even after a `renderPreview`
-      // downscale). Note `scale2ref`'s expression constants are the *reverse*
-      // of what their names suggest at a glance: inside its `w=`/`h=`
-      // expressions, `iw`/`ih` are the *reference* (second) input's
-      // dimensions and `main_w`/`main_h` are the to-be-scaled (first) input's
-      // *own* original dimensions — confirmed empirically against a real
-      // local ffmpeg 8.0 (`scale2ref=w='main_w'...` is a no-op: it just
-      // echoes the overlay's own width back). So every expression below uses
-      // `iw`/`ih` to mean "the running video pad's current size".
+      // with a plain `scale` to absolute pixels derived from
+      // [canvasWidth]/[canvasHeight]: the running pad is exactly that size at
+      // this point (the optional preview resize runs LAST, after every
+      // overlay), so canvas pixels are correct. A plain `scale` is used
+      // instead of `scale2ref` on purpose — two chained `scale2ref` (sticker
+      // + PiP) dead-lock this ffmpeg before it can emit a single frame.
       //
       // `blendMode == 'normal'` composites with a plain, positioned
       // `overlay` (opacity faked via `colorchannelmixer=aa=`, since `overlay`
-      // has no opacity option of its own) — this is the only mode that
+      // has no opacity option of its own) — sized to a fraction of the canvas
+      // *width*, aspect preserved (`scale=W:-2`); this is the only mode that
       // honours [VideoOverlay.scale]/[posX]/[posY]/[rotation]. Every other
       // mode uses ffmpeg's `blend=all_mode=<mode>:all_opacity=<opacity>`
       // instead (verified against a real local ffmpeg 8.0: `blend` supports
       // the same `enable` timeline windowing `overlay` does), which requires
       // both inputs to share exactly one size — so a non-normal blend mode
-      // stretches the overlay to the *full* current canvas rather than
-      // honouring scale/position/rotation. This is a deliberate, documented
-      // simplification (see docs/CAPCUT-SPEC.md): every blend mode and
-      // opacity visibly work, just without independent PiP framing.
+      // fills the *full* canvas rather than honouring scale/position/rotation.
+      // This is a deliberate, documented simplification (see
+      // docs/CAPCUT-SPEC.md): every blend mode and opacity visibly work, just
+      // without independent PiP framing.
       //
       // Fully additive: an empty [videoOverlays] (the default) never writes
       // any of this stage, so the graph is byte-for-byte what it was before
@@ -622,23 +611,14 @@ class FfmpegEngine implements Engine {
         ]);
         final voInput = nextInputIndex++;
 
-        final fmtLabel = '[vofmt$i]';
-        filter.write(';[$voInput:v:0]format=rgba,setpts=PTS-STARTPTS+'
-            '${_fmtFilterNum(overlay.startTime)}/TB$fmtLabel');
-
         final isBlend = overlay.blendMode != 'normal';
         final scaledLabel = '[vosc$i]';
-        final refLabel = '[voref$i]';
-        final voSc = _fmtFilterNum(overlay.scale);
-        // `h=-2` would echo the *reference's* aspect (stretching the overlay
-        // to the canvas shape); compute height from the overlay's own
-        // `main_h/main_w` instead so PiP keeps its native aspect ratio.
-        final sizeExpr = isBlend
-            ? "w='iw':h='ih'"
-            : "w='iw*$voSc':h='iw*$voSc*main_h/main_w'";
-        filter.write(
-            ';$fmtLabel${videoLabel}scale2ref=$sizeExpr$scaledLabel$refLabel');
-        videoLabel = refLabel;
+        final scaleExpr = isBlend
+            ? '$canvasWidth:$canvasHeight'
+            : '${_evenPx(canvasWidth * overlay.scale)}:-2';
+        filter.write(';[$voInput:v:0]format=rgba,setpts=PTS-STARTPTS+'
+            '${_fmtFilterNum(overlay.startTime)}/TB,scale=$scaleExpr'
+            '$scaledLabel');
 
         var overlayPad = scaledLabel;
         if (!isBlend && overlay.rotation != 0) {
@@ -723,6 +703,18 @@ class FfmpegEngine implements Engine {
         filter.write(
             ';${mixLabels.map((l) => '[$l]').join()}amix=inputs=${mixLabels.length}:duration=first:normalize=0[$mixedLabel]');
         audioLabel = '[$mixedLabel]';
+      }
+
+      // Optional resize LAST — after captions and every overlay have
+      // composited against the full-resolution canvas pad. A `renderPreview`
+      // passes a downscale here (`scale=640:-2`) to render a fast proxy; an
+      // export passes whatever its [ExportSettings] resolution needs (often
+      // nothing). Applying it earlier would shrink the pad before overlays,
+      // throwing off every pixel-sized sticker/PiP overlay above.
+      if (scaleFilter != null) {
+        final outLabel = '[vsfinal]';
+        filter.write(';$videoLabel$scaleFilter$outLabel');
+        videoLabel = outLabel;
       }
 
       return _FilterGraph(
@@ -850,6 +842,10 @@ class FfmpegEngine implements Engine {
     required String action,
     void Function(double progress)? onProgress,
   }) async {
+    if (Platform.environment['MOZCUT_DUMP_FFMPEG'] == '1') {
+      // ignore: avoid_print
+      print('[$action] $_ffmpeg ${args.join(' ')}');
+    }
     final process = await Process.start(_ffmpeg, args);
 
     // ffmpeg prints `out_time_ms=...` lines on stdout with -progress.
@@ -942,6 +938,15 @@ class FfmpegEngine implements Engine {
   /// fixed-point, so floating point division never produces scientific
   /// notation (which ffmpeg's filter parser rejects).
   static String _fmtFilterNum(double value) => value.toStringAsFixed(6);
+
+  /// Rounds [px] to the nearest even integer ≥ 2 — a size in whole pixels
+  /// safe to hand to `scale`/`overlay` (H.264 and most filters want even
+  /// dimensions, and a degenerate 0 would abort the graph).
+  static int _evenPx(double px) {
+    final n = px.round();
+    final even = n - (n % 2);
+    return even < 2 ? 2 : even;
+  }
 
   /// Escapes a filesystem path for safe use inside an ffmpeg filtergraph
   /// option string (colons, backslashes and quotes are all filtergraph
