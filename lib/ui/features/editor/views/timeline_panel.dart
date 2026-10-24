@@ -894,6 +894,67 @@ class _Playhead extends ConsumerWidget {
   }
 }
 
+/// A tap + horizontal-drag area for a clip body whose drag recognizer
+/// deliberately EXCLUDES [PointerDeviceKind.trackpad]. A macOS trackpad
+/// two-finger swipe is surfaced to Flutter as a synthetic pointer that an
+/// ordinary [HorizontalDragGestureRecognizer] would accept — and, being the
+/// hit-tested child, it wins the gesture arena against the ancestor
+/// [Scrollable], so the clip slides instead of the view panning. Restricting
+/// the devices lets a trackpad swipe fall through to the scroll view (the view
+/// pans) while a real mouse/touch/stylus drag still moves the clip — the
+/// "separate input channels" model CapCut-style editors rely on (see
+/// docs/TIMELINE-BEHAVIOR.md §1).
+class _ClipDragArea extends StatelessWidget {
+  const _ClipDragArea({
+    required this.onTap,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+    required this.onDragCancel,
+    required this.child,
+  });
+
+  final VoidCallback onTap;
+  final GestureDragStartCallback onDragStart;
+  final GestureDragUpdateCallback onDragUpdate;
+  final GestureDragEndCallback onDragEnd;
+  final VoidCallback onDragCancel;
+  final Widget child;
+
+  static const _dragDevices = {
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    // PointerDeviceKind.trackpad intentionally omitted — see class doc.
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: <Type, GestureRecognizerFactory>{
+        TapGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+          TapGestureRecognizer.new,
+          (r) => r.onTap = onTap,
+        ),
+        HorizontalDragGestureRecognizer: GestureRecognizerFactoryWithHandlers<
+            HorizontalDragGestureRecognizer>(
+          () =>
+              HorizontalDragGestureRecognizer(supportedDevices: _dragDevices),
+          (r) => r
+            ..onStart = onDragStart
+            ..onUpdate = onDragUpdate
+            ..onEnd = onDragEnd
+            ..onCancel = onDragCancel,
+        ),
+      },
+      child: child,
+    );
+  }
+}
+
 /// Computes the horizontal scroll offset that keeps the instant in time under
 /// the pointer visually stationary after a zoom change. [cursorDx] is the
 /// pointer's position in pixels within the timeline *viewport* (not the
@@ -1227,14 +1288,12 @@ class _ClipSlotState extends State<_ClipSlot> {
           right: _ClipSlot._handleWidth,
           child: Transform.translate(
             offset: Offset(_dragDx, 0),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            child: _ClipDragArea(
               onTap: widget.onTap,
-              onHorizontalDragStart: (_) => setState(() => _dragDx = 0),
-              onHorizontalDragUpdate: (d) =>
-                  setState(() => _dragDx += d.delta.dx),
-              onHorizontalDragEnd: (_) => _commitReorder(),
-              onHorizontalDragCancel: () => setState(() => _dragDx = 0),
+              onDragStart: (_) => setState(() => _dragDx = 0),
+              onDragUpdate: (d) => setState(() => _dragDx += d.delta.dx),
+              onDragEnd: (_) => _commitReorder(),
+              onDragCancel: () => setState(() => _dragDx = 0),
               child: _ClipBar(
                 clip: widget.clip,
                 widthPx: widget.clip.duration * widget.px,
@@ -1342,14 +1401,12 @@ class _AudioClipSlotState extends ConsumerState<_AudioClipSlot> {
           right: _AudioClipSlot._handleWidth,
           child: Transform.translate(
             offset: Offset(_dragDx, 0),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            child: _ClipDragArea(
               onTap: _select,
-              onHorizontalDragStart: (_) => setState(() => _dragDx = 0),
-              onHorizontalDragUpdate: (d) =>
-                  setState(() => _dragDx += d.delta.dx),
-              onHorizontalDragEnd: (_) => _commitMove(),
-              onHorizontalDragCancel: () => setState(() => _dragDx = 0),
+              onDragStart: (_) => setState(() => _dragDx = 0),
+              onDragUpdate: (d) => setState(() => _dragDx += d.delta.dx),
+              onDragEnd: (_) => _commitMove(),
+              onDragCancel: () => setState(() => _dragDx = 0),
               child: _AudioClipBar(
                 clip: widget.clip,
                 widthPx: widget.clip.duration * widget.px,
@@ -1554,14 +1611,12 @@ class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
           right: _VideoOverlaySlot._handleWidth,
           child: Transform.translate(
             offset: Offset(_dragDx, 0),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            child: _ClipDragArea(
               onTap: _select,
-              onHorizontalDragStart: (_) => setState(() => _dragDx = 0),
-              onHorizontalDragUpdate: (d) =>
-                  setState(() => _dragDx += d.delta.dx),
-              onHorizontalDragEnd: (_) => _commitMove(),
-              onHorizontalDragCancel: () => setState(() => _dragDx = 0),
+              onDragStart: (_) => setState(() => _dragDx = 0),
+              onDragUpdate: (d) => setState(() => _dragDx += d.delta.dx),
+              onDragEnd: (_) => _commitMove(),
+              onDragCancel: () => setState(() => _dragDx = 0),
               child: _VideoOverlayBar(
                 overlay: widget.overlay,
                 widthPx: widget.overlay.duration * widget.px,
