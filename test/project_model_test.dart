@@ -4,6 +4,7 @@ import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/project.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/domain/models/video_overlay.dart';
 
 void main() {
   test('project survives a manifest round-trip', () {
@@ -28,6 +29,14 @@ void main() {
             outPoint: 15,
             volume: 1.2),
       ],
+      videoOverlays: [
+        VideoOverlay(
+            sourcePath: '/v/pip.mp4',
+            sourceDuration: 10,
+            startTime: 4,
+            scale: 0.3,
+            blendMode: 'multiply'),
+      ],
     );
 
     final restored =
@@ -51,21 +60,28 @@ void main() {
     expect(restored.audioClips.first.start, 2);
     expect(restored.audioClips.first.outPoint, 15);
     expect(restored.audioClips.first.volume, 1.2);
+    expect(restored.videoOverlays.length, 1);
+    expect(restored.videoOverlays.first.sourcePath, '/v/pip.mp4');
+    expect(restored.videoOverlays.first.startTime, 4);
+    expect(restored.videoOverlays.first.scale, 0.3);
+    expect(restored.videoOverlays.first.blendMode, 'multiply');
   });
 
-  test('project defaults to no text/sticker/audio clips when the keys are '
-      'absent (old manifests)', () {
+  test('project defaults to no text/sticker/audio/video overlays when the '
+      'keys are absent (old manifests)', () {
     final project = Project(folderPath: '/tmp/Old Project', name: 'Old');
     final manifest = project.toManifest()
       ..remove('textOverlays')
       ..remove('stickerOverlays')
-      ..remove('audioClips');
+      ..remove('audioClips')
+      ..remove('videoOverlays');
 
     final restored = Project.fromManifest(project.folderPath, manifest);
 
     expect(restored.textOverlays, isEmpty);
     expect(restored.stickerOverlays, isEmpty);
     expect(restored.audioClips, isEmpty);
+    expect(restored.videoOverlays, isEmpty);
   });
 
   test('VideoSettings label formats whole and fractional fps', () {

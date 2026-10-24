@@ -12,6 +12,7 @@ import 'audio_panel.dart';
 import 'captions_panel.dart';
 import 'effects_panel.dart';
 import 'filters_panel.dart';
+import 'overlay_panel.dart';
 import 'stickers_panel.dart';
 import 'templates_panel.dart';
 import 'transitions_panel.dart';
@@ -39,6 +40,7 @@ class BrowserPanel extends ConsumerWidget {
         EditorLeftTab.filters => const FiltersPanel(),
         EditorLeftTab.transitions => const TransitionsPanel(),
         EditorLeftTab.stickers => const StickersPanel(),
+        EditorLeftTab.overlay => const OverlayPanel(),
         EditorLeftTab.templates => const TemplatesPanel(),
         EditorLeftTab.text => const TextPanel(),
       },

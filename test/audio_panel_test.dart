@@ -8,6 +8,7 @@ import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/domain/models/video_overlay.dart';
 import 'package:mozcut/ui/features/editor/view_models/audio_clips_view_model.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
 import 'package:mozcut/ui/features/editor/views/audio_panel.dart';
@@ -29,6 +30,7 @@ class _FakeEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,
@@ -40,6 +42,7 @@ class _FakeEngine implements Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double)? onProgress,

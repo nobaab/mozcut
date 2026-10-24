@@ -16,6 +16,7 @@ import '../view_models/editor_view_model.dart';
 import '../view_models/player_control.dart';
 import '../view_models/sticker_overlays_view_model.dart';
 import '../view_models/text_overlays_view_model.dart';
+import '../view_models/video_overlays_view_model.dart';
 import 'ratio_dialog.dart';
 
 /// The centre monitor, modelled on CapCut's Player: a "Player" header, the video
@@ -175,6 +176,7 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
     final textOverlays = ref.read(textOverlaysProvider);
     final stickerOverlays = ref.read(stickerOverlaysProvider);
     final audioClips = ref.read(audioClipsProvider);
+    final videoOverlays = ref.read(videoOverlaysProvider);
     final engine = ref.read(engineProvider);
     final canvas = ref.read(appProvider)?.video ?? const VideoSettings();
 
@@ -185,6 +187,7 @@ class _PlayerPanelState extends ConsumerState<PlayerPanel> {
           textOverlays: textOverlays,
           stickerOverlays: stickerOverlays,
           audioClips: audioClips,
+          videoOverlays: videoOverlays,
           canvasWidth: canvas.width,
           canvasHeight: canvas.height);
       if (!mounted) return;

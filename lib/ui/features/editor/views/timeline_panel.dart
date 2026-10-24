@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../domain/models/audio_clip.dart';
 import '../../../../domain/models/clip.dart' as model;
 import '../../../../domain/models/media_type.dart';
+import '../../../../domain/models/video_overlay.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/split_handle.dart';
 import '../view_models/audio_clips_view_model.dart';
@@ -17,13 +18,16 @@ import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/media_import.dart';
 import '../view_models/thumbnails_view_model.dart';
+import '../view_models/video_overlays_view_model.dart';
 
 /// The timeline: a fixed track-header gutter on the left, then a horizontally
-/// scrolling ruler + video track + audio lane. Clips sit end to end on one
-/// video track, sized by the zoom; audio clips float freely on the lane below,
-/// positioned by their own `start`. A playhead line tracks the preview.
-/// Modelled on CapCut. Also accepts drag-and-drop of media files, routed the
-/// same way as the media browser's Import button (see `importMediaPaths`).
+/// scrolling ruler + video track + overlay lane + audio lane. Clips sit end
+/// to end on one video track, sized by the zoom; video overlays (the
+/// picture-in-picture lane) and audio clips both float freely on their own
+/// lane, positioned by their own `startTime`/`start`. A playhead line tracks
+/// the preview. Modelled on CapCut. Also accepts drag-and-drop of media
+/// files, routed the same way as the media browser's Import button (see
+/// `importMediaPaths`).
 class TimelinePanel extends ConsumerStatefulWidget {
   const TimelinePanel({super.key});
 
@@ -31,6 +35,7 @@ class TimelinePanel extends ConsumerStatefulWidget {
   static const _rulerHeight = 24.0;
   static const _videoLaneHeight = 64.0;
   static const _laneGap = 6.0;
+  static const _overlayLaneHeight = 48.0;
   static const _audioLaneHeight = 48.0;
 
   @override
@@ -189,6 +194,8 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     final px = ref.watch(timelineZoomProvider);
     final audioClips = ref.watch(audioClipsProvider);
     final selectedAudioId = ref.watch(selectedAudioClipProvider);
+    final videoOverlays = ref.watch(videoOverlaysProvider);
+    final selectedOverlayId = ref.watch(selectedVideoOverlayProvider);
 
     final total = state.totalDuration;
     // Cumulative start offset of each clip on the timeline.
@@ -199,14 +206,18 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
       acc += c.duration;
     }
 
-    // The audio lane's clips are positioned independently of the video
-    // track, so the content area needs to be wide enough for whichever of
-    // the two extends further right.
+    // The overlay/audio lanes' items are positioned independently of the
+    // video track, so the content area needs to be wide enough for whichever
+    // of the three extends further right.
     var audioEnd = 0.0;
     for (final a in audioClips) {
       audioEnd = math.max(audioEnd, a.start + a.duration);
     }
-    final timelineSeconds = math.max(total, audioEnd);
+    var overlayEnd = 0.0;
+    for (final o in videoOverlays) {
+      overlayEnd = math.max(overlayEnd, o.startTime + o.duration);
+    }
+    final timelineSeconds = math.max(total, math.max(audioEnd, overlayEnd));
 
     // Playhead in timeline seconds, derived from the preview position within
     // the selected clip.
@@ -228,7 +239,9 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
               width: TimelinePanel._headerWidth, child: _trackHeader()),
           const VerticalDivider(width: 1, thickness: 1, color: AppColors.line),
           Expanded(
-            child: state.clips.isEmpty && audioClips.isEmpty
+            child: state.clips.isEmpty &&
+                    audioClips.isEmpty &&
+                    videoOverlays.isEmpty
                 ? Center(
                     child: Text(
                         'Imported clips show up here — drop media to add it',
@@ -353,6 +366,58 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                         ),
                                         const SizedBox(
                                             height: TimelinePanel._laneGap),
+                                        // The overlay lane: video overlays
+                                        // (picture-in-picture) float freely,
+                                        // positioned by their own `startTime`
+                                        // (unlike the video track, they don't
+                                        // shift each other) — same treatment
+                                        // as the audio lane below.
+                                        SizedBox(
+                                          height:
+                                              TimelinePanel._overlayLaneHeight,
+                                          width: contentW.toDouble(),
+                                          child: Stack(
+                                            children: [
+                                              Positioned.fill(
+                                                child: GestureDetector(
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onTapDown: (_) => ref
+                                                      .read(
+                                                          selectedVideoOverlayProvider
+                                                              .notifier)
+                                                      .set(null),
+                                                ),
+                                              ),
+                                              for (var i = 0;
+                                                  i < videoOverlays.length;
+                                                  i++)
+                                                Positioned(
+                                                  key: ValueKey(
+                                                      videoOverlays[i].id),
+                                                  left:
+                                                      videoOverlays[i]
+                                                          .startTime *
+                                                          px,
+                                                  width: videoOverlays[i]
+                                                          .duration *
+                                                      px,
+                                                  top: 0,
+                                                  bottom: 0,
+                                                  child: _VideoOverlaySlot(
+                                                    overlay: videoOverlays[i],
+                                                    index: i,
+                                                    px: px,
+                                                    selected:
+                                                        videoOverlays[i].id ==
+                                                            selectedOverlayId,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(
+                                            height: TimelinePanel._laneGap),
                                         // The audio lane: clips float freely,
                                         // positioned by their own `start`
                                         // (unlike the video track, they don't
@@ -459,6 +524,18 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                 _hdrIcon(Icons.visibility_outlined),
                 _hdrIcon(Icons.volume_up_outlined),
                 _hdrIcon(Icons.more_horiz),
+              ],
+            ),
+          ),
+          const SizedBox(height: TimelinePanel._laneGap),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                Icon(Icons.picture_in_picture_alt_outlined,
+                    size: 15, color: Colors.white.withValues(alpha: 0.5)),
+                const SizedBox(width: 6),
+                const Text('Overlay', style: TextStyle(fontSize: 11)),
               ],
             ),
           ),
@@ -1000,6 +1077,208 @@ class _AudioClipBar extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(3),
                   ),
                   child: Text(clip.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// An overlay-lane bar: tap to select, drag the body to move its `startTime`,
+/// drag the left/right edge handles to trim (adjusting `inPoint`/`outPoint` —
+/// the left handle also shifts `startTime` so the bar's left edge tracks the
+/// drag). Exactly [_AudioClipSlot]'s behaviour, applied to [VideoOverlay]'s
+/// fields instead of [AudioClip]'s. A small close button appears on the
+/// selected bar to delete it.
+class _VideoOverlaySlot extends ConsumerStatefulWidget {
+  const _VideoOverlaySlot({
+    required this.overlay,
+    required this.index,
+    required this.px,
+    required this.selected,
+  });
+
+  final VideoOverlay overlay;
+  final int index;
+  final double px;
+  final bool selected;
+
+  static const _handleWidth = 8.0;
+  static const _minLength = 0.1;
+
+  @override
+  ConsumerState<_VideoOverlaySlot> createState() => _VideoOverlaySlotState();
+}
+
+class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
+  double _dragDx = 0;
+
+  VideoOverlays get _notifier => ref.read(videoOverlaysProvider.notifier);
+
+  void _select() =>
+      ref.read(selectedVideoOverlayProvider.notifier).set(widget.overlay.id);
+
+  void _commitMove() {
+    final shift = _dragDx;
+    setState(() => _dragDx = 0);
+    if (shift.abs() < 1) return; // negligible movement — treat as a tap
+    final newStart = (widget.overlay.startTime + shift / widget.px)
+        .clamp(0.0, double.infinity);
+    _notifier.update(
+        widget.index, widget.overlay.copyWith(startTime: newStart));
+  }
+
+  void _trimLeft(double dx) {
+    final deltaSeconds = dx / widget.px;
+    final o = widget.overlay;
+    var newIn = (o.inPoint + deltaSeconds).clamp(0.0, o.sourceDuration);
+    if (o.outPoint - newIn < _VideoOverlaySlot._minLength) {
+      newIn = (o.outPoint - _VideoOverlaySlot._minLength)
+          .clamp(0.0, o.sourceDuration);
+    }
+    final actualDelta = newIn - o.inPoint;
+    _notifier.update(
+        widget.index,
+        o.copyWith(
+            inPoint: newIn,
+            startTime:
+                (o.startTime + actualDelta).clamp(0.0, double.infinity)));
+  }
+
+  void _trimRight(double dx) {
+    final deltaSeconds = dx / widget.px;
+    final o = widget.overlay;
+    var newOut = (o.outPoint + deltaSeconds).clamp(0.0, o.sourceDuration);
+    if (newOut - o.inPoint < _VideoOverlaySlot._minLength) {
+      newOut = (o.inPoint + _VideoOverlaySlot._minLength)
+          .clamp(0.0, o.sourceDuration);
+    }
+    _notifier.update(widget.index, o.copyWith(outPoint: newOut));
+  }
+
+  void _delete() {
+    _notifier.removeAt(widget.index);
+    ref.read(selectedVideoOverlayProvider.notifier).set(null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          left: _VideoOverlaySlot._handleWidth,
+          right: _VideoOverlaySlot._handleWidth,
+          child: Transform.translate(
+            offset: Offset(_dragDx, 0),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _select,
+              onHorizontalDragStart: (_) => setState(() => _dragDx = 0),
+              onHorizontalDragUpdate: (d) =>
+                  setState(() => _dragDx += d.delta.dx),
+              onHorizontalDragEnd: (_) => _commitMove(),
+              onHorizontalDragCancel: () => setState(() => _dragDx = 0),
+              child: _VideoOverlayBar(
+                overlay: widget.overlay,
+                widthPx: widget.overlay.duration * widget.px,
+                selected: widget.selected,
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          child: SplitHandle(axis: Axis.vertical, onDrag: _trimLeft),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 0,
+          child: SplitHandle(axis: Axis.vertical, onDrag: _trimRight),
+        ),
+        if (widget.selected)
+          Positioned(
+            right: _VideoOverlaySlot._handleWidth + 2,
+            top: 2,
+            child: GestureDetector(
+              onTap: _delete,
+              child: Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.close, size: 12, color: Colors.white),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// A video overlay's bar background: a flat accent-tinted bar with a PiP icon
+/// and the filename label, plus the selected/accent border — same visual
+/// idiom as [_AudioClipBar] but without a waveform (this lane is video, not
+/// audio; a filmstrip would need the same thumbnail-extraction machinery
+/// [_ClipBar] uses, left for later).
+class _VideoOverlayBar extends StatelessWidget {
+  const _VideoOverlayBar(
+      {required this.overlay, required this.widthPx, required this.selected});
+
+  final VideoOverlay overlay;
+  final double widthPx;
+  final bool selected;
+
+  static const _barColor = Color(0xFF4A2D55);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 2),
+      decoration: BoxDecoration(
+        color: _barColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: selected ? AppColors.accent : Colors.transparent,
+          width: 2,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 4,
+                height: double.infinity,
+                color: AppColors.accent.withValues(alpha: 0.8),
+              ),
+              const SizedBox(width: 6),
+              Icon(Icons.picture_in_picture_alt_outlined,
+                  size: 12, color: Colors.white.withValues(alpha: 0.6)),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 1),
+                  margin: const EdgeInsets.only(top: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(overlay.fileName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 11)),

@@ -3,6 +3,7 @@ import '../../domain/models/clip.dart';
 import '../../domain/models/export_settings.dart';
 import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
+import '../../domain/models/video_overlay.dart';
 
 /// The boundary between the UI and the heavy video work.
 ///
@@ -25,14 +26,18 @@ abstract class Engine {
   /// Trims each clip to its in/out region, joins them in order, applies
   /// [settings] (resolution / frame-rate / codec / quality / format), burns in
   /// any [textOverlays] and [stickerOverlays] (both timed on the final
-  /// timeline), mixes in [audioClips] (the project's audio lane, also timed
-  /// on the final timeline — see [AudioClip.start]), and writes the result to
-  /// [outputPath]. Reports 0..1 progress via [onProgress]. [canvasWidth]/
-  /// [canvasHeight] set the working canvas every clip's transform is
-  /// composited against (the project's aspect ratio) — defaults to
-  /// 1920x1080, reproducing the export pipeline's original, fixed behaviour.
-  /// An empty [audioClips] (the default) reproduces the exact output from
-  /// before this feature existed — the main audio pad is untouched.
+  /// timeline), composites any [videoOverlays] (the project's picture-in-
+  /// picture lane — a secondary video/image, scaled/positioned, with its own
+  /// opacity and blend mode, timed on the final timeline via
+  /// [VideoOverlay.startTime]), mixes in [audioClips] (the project's audio
+  /// lane, also timed on the final timeline — see [AudioClip.start]) plus any
+  /// audio carried by [videoOverlays], and writes the result to [outputPath].
+  /// Reports 0..1 progress via [onProgress]. [canvasWidth]/[canvasHeight] set
+  /// the working canvas every clip's transform is composited against (the
+  /// project's aspect ratio) — defaults to 1920x1080, reproducing the export
+  /// pipeline's original, fixed behaviour. Empty [audioClips] and
+  /// [videoOverlays] (the default for both) reproduce the exact output from
+  /// before those features existed — the main audio/video pads are untouched.
   Future<void> export({
     required List<Clip> clips,
     required String outputPath,
@@ -40,6 +45,7 @@ abstract class Engine {
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double progress)? onProgress,
@@ -47,19 +53,20 @@ abstract class Engine {
 
   /// Renders a small/fast proxy of the *whole timeline* — the same edit
   /// [export] would produce (per-clip transform/speed/audio, concatenated in
-  /// order, captions, [textOverlays], [stickerOverlays] and [audioClips]
-  /// mixed in) but at low resolution and encoder effort, so it renders in a
-  /// fraction of the time. Used to drive a WYSIWYG player preview instead of
-  /// showing just one clip's raw source. [canvasWidth]/[canvasHeight] set the
-  /// working canvas (the project's aspect ratio), same meaning as in [export]
-  /// and defaulting the same way. Returns the path to the rendered temp MP4.
-  /// Reports 0..1 progress via [onProgress]. Throws [EngineException] if
-  /// [clips] is empty or ffmpeg fails.
+  /// order, captions, [textOverlays], [stickerOverlays], [videoOverlays] and
+  /// [audioClips] mixed in) but at low resolution and encoder effort, so it
+  /// renders in a fraction of the time. Used to drive a WYSIWYG player
+  /// preview instead of showing just one clip's raw source. [canvasWidth]/
+  /// [canvasHeight] set the working canvas (the project's aspect ratio), same
+  /// meaning as in [export] and defaulting the same way. Returns the path to
+  /// the rendered temp MP4. Reports 0..1 progress via [onProgress]. Throws
+  /// [EngineException] if [clips] is empty or ffmpeg fails.
   Future<String> renderPreview({
     required List<Clip> clips,
     List<TextOverlay> textOverlays = const [],
     List<StickerOverlay> stickerOverlays = const [],
     List<AudioClip> audioClips = const [],
+    List<VideoOverlay> videoOverlays = const [],
     int canvasWidth = 1920,
     int canvasHeight = 1080,
     void Function(double progress)? onProgress,

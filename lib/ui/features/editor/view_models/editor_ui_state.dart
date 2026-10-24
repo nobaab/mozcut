@@ -10,6 +10,7 @@ enum EditorLeftTab {
   audio('Audio', Icons.music_note_outlined),
   text('Text', Icons.title),
   stickers('Stickers', Icons.emoji_emotions_outlined),
+  overlay('Overlay', Icons.picture_in_picture_alt_outlined),
   effects('Effects', Icons.auto_awesome_outlined),
   transitions('Transitions', Icons.swap_horiz),
   captions('Captions', Icons.closed_caption_outlined),
