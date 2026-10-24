@@ -61,6 +61,8 @@ class _NoEngine implements Engine {
     required String outputPath,
   }) async {}
   @override
+  Future<String> generateSfx(String id) async => '';
+  @override
   Future<List<String>> extractThumbnails({
     required Clip clip,
     required int count,
