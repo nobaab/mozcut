@@ -616,4 +616,143 @@ void main() {
       expect(clipAt(0).keyframes.containsKey(kKeyframeRotation), isFalse);
     });
   });
+
+  group('applyAnimation', () {
+    test('Fade-In writes opacity 0 -> 1 over duration and records the '
+        'preset', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.5);
+      expect(clipAt(0).keyframes[kKeyframeOpacity], [
+        const Keyframe(timeSec: 0.0, value: 0.0),
+        const Keyframe(timeSec: 0.5, value: 1.0),
+      ]);
+      expect(clipAt(0).animationIn, kAnimFade);
+      expect(clipAt(0).animationInDuration, 0.5);
+    });
+
+    test('Fade-Out writes opacity 1 -> 0 over the last duration seconds',
+        () {
+      // clipAt(0).duration == 10 (default sourceDuration, untrimmed).
+      editor.applyAnimation(isIn: false, preset: kAnimFade, duration: 0.5);
+      expect(clipAt(0).keyframes[kKeyframeOpacity], [
+        const Keyframe(timeSec: 9.5, value: 1.0),
+        const Keyframe(timeSec: 10.0, value: 0.0),
+      ]);
+      expect(clipAt(0).animationOut, kAnimFade);
+      expect(clipAt(0).animationOutDuration, 0.5);
+    });
+
+    test('Zoom In writes scale 1.2 -> 1.0 (In) / 1.0 -> 1.2 (Out)', () {
+      editor.applyAnimation(isIn: true, preset: kAnimZoomIn, duration: 0.5);
+      expect(clipAt(0).keyframes[kKeyframeScale], [
+        const Keyframe(timeSec: 0.0, value: 1.2),
+        const Keyframe(timeSec: 0.5, value: 1.0),
+      ]);
+
+      editor.applyAnimation(isIn: false, preset: kAnimZoomIn, duration: 0.5);
+      expect(clipAt(0).keyframes[kKeyframeScale], [
+        const Keyframe(timeSec: 0.0, value: 1.2),
+        const Keyframe(timeSec: 0.5, value: 1.0),
+        const Keyframe(timeSec: 9.5, value: 1.0),
+        const Keyframe(timeSec: 10.0, value: 1.2),
+      ]);
+    });
+
+    test('Slide Left comes in from the right and exits further left', () {
+      editor.applyAnimation(
+          isIn: true, preset: kAnimSlideLeft, duration: 0.5);
+      expect(clipAt(0).keyframes[kKeyframePosX], [
+        const Keyframe(timeSec: 0.0, value: 1.0),
+        const Keyframe(timeSec: 0.5, value: 0.0),
+      ]);
+
+      editor.applyAnimation(
+          isIn: false, preset: kAnimSlideLeft, duration: 0.5);
+      expect(clipAt(0).keyframes[kKeyframePosX], [
+        const Keyframe(timeSec: 0.0, value: 1.0),
+        const Keyframe(timeSec: 0.5, value: 0.0),
+        const Keyframe(timeSec: 9.5, value: 0.0),
+        const Keyframe(timeSec: 10.0, value: -1.0),
+      ]);
+    });
+
+    test('applying kAnimNone clears the edge\'s keyframes', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.5);
+      editor.applyAnimation(isIn: true, preset: kAnimNone, duration: 0.5);
+      expect(clipAt(0).keyframes.containsKey(kKeyframeOpacity), isFalse);
+      expect(clipAt(0).animationIn, isNull);
+    });
+
+    test('switching preset on the same edge removes the previous preset\'s '
+        'keyframes instead of leaving them behind', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.5);
+      editor.applyAnimation(isIn: true, preset: kAnimZoomIn, duration: 0.5);
+      expect(clipAt(0).keyframes.containsKey(kKeyframeOpacity), isFalse);
+      expect(clipAt(0).keyframes[kKeyframeScale], [
+        const Keyframe(timeSec: 0.0, value: 1.2),
+        const Keyframe(timeSec: 0.5, value: 1.0),
+      ]);
+    });
+
+    test('changing duration on the same preset moves its keyframes rather '
+        'than adding new ones', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.5);
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 1.0);
+      expect(clipAt(0).keyframes[kKeyframeOpacity], [
+        const Keyframe(timeSec: 0.0, value: 0.0),
+        const Keyframe(timeSec: 1.0, value: 1.0),
+      ]);
+    });
+
+    test('applying Fade to the In edge does not touch the Out edge, even '
+        'when both animate the same property', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.5);
+      editor.applyAnimation(isIn: false, preset: kAnimFade, duration: 0.3);
+      editor.applyAnimation(isIn: true, preset: kAnimNone, duration: 0.5);
+      expect(clipAt(0).keyframes[kKeyframeOpacity], [
+        const Keyframe(timeSec: 9.7, value: 1.0),
+        const Keyframe(timeSec: 10.0, value: 0.0),
+      ]);
+      expect(clipAt(0).animationOut, kAnimFade);
+    });
+
+    test('duration is clamped to 0.1..3s', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 10.0);
+      expect(clipAt(0).animationInDuration, 3.0);
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.0);
+      expect(clipAt(0).animationInDuration, 0.1);
+    });
+
+    test('does not affect other clips', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.5);
+      expect(clipAt(1).animationIn, isNull);
+      expect(clipAt(1).keyframes.containsKey(kKeyframeOpacity), isFalse);
+    });
+
+    test('is undoable', () {
+      editor.applyAnimation(isIn: true, preset: kAnimFade, duration: 0.5);
+      editor.undo();
+      expect(clipAt(0).animationIn, isNull);
+      expect(clipAt(0).keyframes.containsKey(kKeyframeOpacity), isFalse);
+    });
+  });
+
+  group('applyComboAnimation', () {
+    test('applies the same preset/duration to both edges in one undo step',
+        () {
+      editor.applyComboAnimation(preset: kAnimFade, duration: 0.5);
+      expect(clipAt(0).animationIn, kAnimFade);
+      expect(clipAt(0).animationOut, kAnimFade);
+      expect(clipAt(0).keyframes[kKeyframeOpacity], [
+        const Keyframe(timeSec: 0.0, value: 0.0),
+        const Keyframe(timeSec: 0.5, value: 1.0),
+        const Keyframe(timeSec: 9.5, value: 1.0),
+        const Keyframe(timeSec: 10.0, value: 0.0),
+      ]);
+
+      editor.undo();
+      expect(clipAt(0).animationIn, isNull);
+      expect(clipAt(0).animationOut, isNull);
+      expect(clipAt(0).keyframes.containsKey(kKeyframeOpacity), isFalse);
+    });
+  });
 }

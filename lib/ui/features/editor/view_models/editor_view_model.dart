@@ -371,21 +371,8 @@ class Editor extends _$Editor {
   /// in place rather than duplicated (re-recording at the same instant just
   /// updates the value). The list is kept sorted by time.
   void addKeyframe(String property, double timeSec, double value) {
-    _mapSelected((c) {
-      final list = List<Keyframe>.of(c.keyframes[property] ?? const []);
-      final idx =
-          list.indexWhere((k) => (k.timeSec - timeSec).abs() < 0.001);
-      final kf = Keyframe(timeSec: timeSec, value: value);
-      if (idx >= 0) {
-        list[idx] = kf;
-      } else {
-        list.add(kf);
-      }
-      list.sort((a, b) => a.timeSec.compareTo(b.timeSec));
-      final keyframes = Map<String, List<Keyframe>>.of(c.keyframes)
-        ..[property] = list;
-      return c.copyWith(keyframes: keyframes);
-    });
+    _mapSelected((c) => c.copyWith(
+        keyframes: _putKeyframe(c.keyframes, property, timeSec, value)));
   }
 
   /// Removes the keyframe within ~1ms of clip-relative [timeSec] from
@@ -393,21 +380,8 @@ class Editor extends _$Editor {
   /// drops the map entry entirely, reverting it to static (using its current
   /// field value) — same as [clearKeyframes].
   void removeKeyframe(String property, double timeSec) {
-    _mapSelected((c) {
-      final list = c.keyframes[property];
-      if (list == null || list.isEmpty) return c;
-      final idx =
-          list.indexWhere((k) => (k.timeSec - timeSec).abs() < 0.001);
-      if (idx < 0) return c;
-      final updated = List<Keyframe>.of(list)..removeAt(idx);
-      final keyframes = Map<String, List<Keyframe>>.of(c.keyframes);
-      if (updated.isEmpty) {
-        keyframes.remove(property);
-      } else {
-        keyframes[property] = updated;
-      }
-      return c.copyWith(keyframes: keyframes);
-    });
+    _mapSelected((c) =>
+        c.copyWith(keyframes: _dropKeyframe(c.keyframes, property, timeSec)));
   }
 
   /// Removes every keyframe for [property] on the selected clip, reverting
@@ -430,6 +404,53 @@ class Editor extends _$Editor {
     if (c == null) return;
     final t = (ref.read(playheadProvider) - c.inPoint).clamp(0.0, c.duration);
     addKeyframe(property, t, c.valueAt(property, t));
+  }
+
+  // ── clip animation (In/Out/Combo) ──
+  // The Animation tab's presets (docs/CAPCUT-SPEC.md §5.5) are implemented
+  // entirely as generated keyframes on top of the engine above — no change
+  // to FfmpegEngine was needed. [Clip.animationIn]/[Clip.animationOut] just
+  // let the UI know which preset (if any) is active per edge.
+
+  /// Applies (or, passing [kAnimNone], clears) [preset] on the selected
+  /// clip's "in" edge (`isIn: true`, the first [duration] seconds) or "out"
+  /// edge (`isIn: false`, the last [duration] seconds). [duration] is
+  /// clamped to [kAnimationMinDuration]..[kAnimationMaxDuration].
+  ///
+  /// Writes two keyframes on whichever property the preset animates: one at
+  /// the clip's outer edge (0 for "in", [Clip.duration] for "out") holding
+  /// the animated extreme (e.g. opacity 0 for Fade), and one at the *inner*
+  /// edge — [duration] seconds in from the outer edge — holding the
+  /// property's current static value. That inner keyframe is what keeps the
+  /// rest of the clip unaffected: since [keyframeValueAt] never extrapolates
+  /// past the last keyframe, everything beyond it just stays at the static
+  /// value, identical to before the animation was applied.
+  ///
+  /// Re-applying (a different preset, or the same preset with a new
+  /// [duration]) first removes exactly the two keyframes the previous preset
+  /// on *this* edge wrote, so it never disturbs the other edge or an
+  /// unrelated property — see [_applyAnimationToClip].
+  void applyAnimation({
+    required bool isIn,
+    required String preset,
+    double duration = kAnimationDefaultDuration,
+  }) {
+    _mapSelected(
+        (c) => _applyAnimationToClip(c, isIn: isIn, preset: preset, duration: duration));
+  }
+
+  /// Applies [preset] to *both* edges at once (the Animation tab's "Combo"
+  /// sub-tab) as a single undo step.
+  void applyComboAnimation({
+    required String preset,
+    double duration = kAnimationDefaultDuration,
+  }) {
+    _mapSelected((c) {
+      final afterIn =
+          _applyAnimationToClip(c, isIn: true, preset: preset, duration: duration);
+      return _applyAnimationToClip(afterIn,
+          isIn: false, preset: preset, duration: duration);
+    });
   }
 
   // ── color / filter ──
@@ -540,6 +561,168 @@ class Editor extends _$Editor {
       return s.copyWith(clips: clips);
     });
   }
+}
+
+// ── clip animation helpers ──
+// Pure functions behind [Editor.applyAnimation]/[Editor.applyComboAnimation]
+// — free functions (rather than instance methods) because they only ever
+// operate on a plain [Clip] passed in by [Editor._mapSelected], never on
+// [Editor]'s own state.
+
+/// The transform property(ies) [preset] animates. Used both to write new
+/// keyframes and to know which ones a *previous* preset on the same edge
+/// should have cleared.
+List<String> _animationProperties(String preset) => switch (preset) {
+      kAnimFade => const [kKeyframeOpacity],
+      kAnimZoomIn || kAnimZoomOut => const [kKeyframeScale],
+      kAnimSlideLeft || kAnimSlideRight => const [kKeyframePosX],
+      kAnimSlideUp || kAnimSlideDown => const [kKeyframePosY],
+      _ => const [],
+    };
+
+/// Writes (or replaces, if one already sits within ~1ms of [timeSec]) a
+/// keyframe for [property] at clip-relative [timeSec]. Same logic as
+/// [Editor.addKeyframe], factored out so [_applyAnimationToClip] can use it
+/// without going through [Editor]'s `_mapSelected`/undo plumbing itself —
+/// the caller wraps the whole animation edit in a single mutation instead.
+Map<String, List<Keyframe>> _putKeyframe(
+  Map<String, List<Keyframe>> keyframes,
+  String property,
+  double timeSec,
+  double value,
+) {
+  final list = List<Keyframe>.of(keyframes[property] ?? const []);
+  final idx = list.indexWhere((k) => (k.timeSec - timeSec).abs() < 0.001);
+  final kf = Keyframe(timeSec: timeSec, value: value);
+  if (idx >= 0) {
+    list[idx] = kf;
+  } else {
+    list.add(kf);
+  }
+  list.sort((a, b) => a.timeSec.compareTo(b.timeSec));
+  return Map<String, List<Keyframe>>.of(keyframes)..[property] = list;
+}
+
+/// Removes the keyframe within ~1ms of clip-relative [timeSec] from
+/// [property]'s list, if any — dropping the map entry entirely once its list
+/// is empty. Same logic as [Editor.removeKeyframe]; see [_putKeyframe] for
+/// why it's factored out as a free function.
+Map<String, List<Keyframe>> _dropKeyframe(
+  Map<String, List<Keyframe>> keyframes,
+  String property,
+  double timeSec,
+) {
+  final list = keyframes[property];
+  if (list == null || list.isEmpty) return keyframes;
+  final idx = list.indexWhere((k) => (k.timeSec - timeSec).abs() < 0.001);
+  if (idx < 0) return keyframes;
+  final updated = List<Keyframe>.of(list)..removeAt(idx);
+  final result = Map<String, List<Keyframe>>.of(keyframes);
+  if (updated.isEmpty) {
+    result.remove(property);
+  } else {
+    result[property] = updated;
+  }
+  return result;
+}
+
+/// The actual work behind [Editor.applyAnimation] for a single edge
+/// (`isIn: true` = the clip's start, `false` = its end), as a pure
+/// [Clip] -> [Clip] step so [Editor.applyComboAnimation] can chain two calls
+/// (in, then out) inside one `_mapSelected`/undo step.
+///
+/// Always starts by removing the two keyframes the *previous* preset on this
+/// same edge wrote (computed from [Clip.animationIn]/[Clip.animationInDuration]
+/// or their `...Out` counterparts) — so switching preset, changing duration,
+/// or clearing (`preset == kAnimNone`) never leaves stale keyframes behind
+/// and never touches the other edge or an unrelated property, even when both
+/// edges animate the same property (e.g. Fade applied to both In and Out).
+Clip _applyAnimationToClip(
+  Clip c, {
+  required bool isIn,
+  required String preset,
+  required double duration,
+}) {
+  final total = c.duration;
+  var keyframes = c.keyframes;
+
+  final prevPreset = isIn ? c.animationIn : c.animationOut;
+  if (prevPreset != null) {
+    final prevDuration =
+        (isIn ? c.animationInDuration : c.animationOutDuration)
+            .clamp(0.0, total)
+            .toDouble();
+    final prevOuter = isIn ? 0.0 : total;
+    final prevInner = isIn ? prevDuration : total - prevDuration;
+    for (final property in _animationProperties(prevPreset)) {
+      keyframes = _dropKeyframe(keyframes, property, prevOuter);
+      keyframes = _dropKeyframe(keyframes, property, prevInner);
+    }
+  }
+
+  final clampedDuration =
+      duration.clamp(kAnimationMinDuration, kAnimationMaxDuration).toDouble();
+
+  if (preset == kAnimNone) {
+    return c.copyWith(
+      keyframes: keyframes,
+      clearAnimationIn: isIn,
+      clearAnimationOut: !isIn,
+      animationInDuration: isIn ? clampedDuration : null,
+      animationOutDuration: !isIn ? clampedDuration : null,
+    );
+  }
+
+  // A clip too short to hold the full requested duration still gets an
+  // animation — just squeezed to fit (clamped to the clip's own length)
+  // rather than silently doing nothing.
+  final dur = clampedDuration.clamp(0.0, total <= 0 ? 0.0 : total).toDouble();
+  final outer = isIn ? 0.0 : total;
+  final inner = isIn ? dur : total - dur;
+
+  void write(String property, double outerValue, double innerValue) {
+    keyframes = _putKeyframe(keyframes, property, outer, outerValue);
+    keyframes = _putKeyframe(keyframes, property, inner, innerValue);
+  }
+
+  switch (preset) {
+    case kAnimFade:
+      write(kKeyframeOpacity, 0.0, c.opacity);
+    case kAnimZoomIn:
+      write(kKeyframeScale, (c.scale * 1.2).clamp(0.05, 8.0).toDouble(),
+          c.scale);
+    case kAnimZoomOut:
+      write(kKeyframeScale, (c.scale * 0.8).clamp(0.05, 8.0).toDouble(),
+          c.scale);
+    case kAnimSlideLeft:
+      write(
+          kKeyframePosX,
+          (c.posX + (isIn ? 1.0 : -1.0)).clamp(-2.0, 2.0).toDouble(),
+          c.posX);
+    case kAnimSlideRight:
+      write(
+          kKeyframePosX,
+          (c.posX + (isIn ? -1.0 : 1.0)).clamp(-2.0, 2.0).toDouble(),
+          c.posX);
+    case kAnimSlideUp:
+      write(
+          kKeyframePosY,
+          (c.posY + (isIn ? 1.0 : -1.0)).clamp(-2.0, 2.0).toDouble(),
+          c.posY);
+    case kAnimSlideDown:
+      write(
+          kKeyframePosY,
+          (c.posY + (isIn ? -1.0 : 1.0)).clamp(-2.0, 2.0).toDouble(),
+          c.posY);
+  }
+
+  return c.copyWith(
+    keyframes: keyframes,
+    animationIn: isIn ? preset : null,
+    animationInDuration: isIn ? clampedDuration : null,
+    animationOut: !isIn ? preset : null,
+    animationOutDuration: !isIn ? clampedDuration : null,
+  );
 }
 
 /// Export progress, 0..1, or null when not exporting.

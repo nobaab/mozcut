@@ -44,8 +44,9 @@ class InspectorPanel extends ConsumerWidget {
                     EditorRightTab.speed =>
                       _SpeedTab(key: ValueKey(clip.id)),
                     EditorRightTab.audio => _AudioTab(),
+                    EditorRightTab.animation =>
+                      _AnimationTab(key: ValueKey(clip.id)),
                     EditorRightTab.adjustment => _AdjustmentTab(),
-                    _ => _ComingSoon(label: rightTab.label),
                   },
           ),
         ],
@@ -843,6 +844,169 @@ class _AudioTab extends ConsumerWidget {
             key: ValueKey('${clip.id}-fadeOut'),
             value: clip.fadeOut,
             onChanged: (v) => editor.updateSelectedAudio(fadeOut: v),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Which edge of the clip the Animation tab's preset chips/duration slider
+/// currently target. "Combo" applies the same preset+duration to both ends
+/// at once (see [Editor.applyComboAnimation]).
+enum _AnimEdge { in_, out, combo }
+
+extension on _AnimEdge {
+  String get label => switch (this) {
+        _AnimEdge.in_ => 'In',
+        _AnimEdge.out => 'Out',
+        _AnimEdge.combo => 'Combo',
+      };
+}
+
+/// The Animation tab: In / Out / Combo sub-tabs over the same preset chips
+/// (None, Fade, Zoom In/Out, Slide Left/Right/Up/Down) and a duration slider
+/// (docs/CAPCUT-SPEC.md §5.5) — see [Clip.animationIn]/[Clip.animationOut]
+/// and `Editor.applyAnimation`/`applyComboAnimation`, which turn a tap here
+/// into generated keyframes. Keyed by clip id from the parent (same trick as
+/// [_SpeedTab]) so each clip gets fresh local duration state instead of
+/// inheriting whatever was last dragged for a different clip.
+class _AnimationTab extends ConsumerStatefulWidget {
+  const _AnimationTab({super.key});
+
+  @override
+  ConsumerState<_AnimationTab> createState() => _AnimationTabState();
+}
+
+class _AnimationTabState extends ConsumerState<_AnimationTab> {
+  _AnimEdge _edge = _AnimEdge.in_;
+
+  // The duration slider's value per edge. Mirrors Clip.animationIn/OutDuration
+  // once a preset is applied on that edge, but lets the slider move *before*
+  // a preset is picked without writing anything to the clip for nothing —
+  // the next preset tap applies with whatever this currently holds.
+  late double _inDuration;
+  late double _outDuration;
+  late double _comboDuration;
+
+  @override
+  void initState() {
+    super.initState();
+    final clip = ref.read(editorProvider).selected!;
+    _inDuration = clip.animationInDuration;
+    _outDuration = clip.animationOutDuration;
+    _comboDuration = clip.animationInDuration;
+  }
+
+  double get _duration => switch (_edge) {
+        _AnimEdge.in_ => _inDuration,
+        _AnimEdge.out => _outDuration,
+        _AnimEdge.combo => _comboDuration,
+      };
+
+  /// The preset currently active on the selected edge — [kAnimNone] if none,
+  /// or null for Combo when the In/Out presets differ (nothing to highlight).
+  String? _activePreset(Clip clip) => switch (_edge) {
+        _AnimEdge.in_ => clip.animationIn ?? kAnimNone,
+        _AnimEdge.out => clip.animationOut ?? kAnimNone,
+        _AnimEdge.combo => clip.animationIn == clip.animationOut
+            ? (clip.animationIn ?? kAnimNone)
+            : null,
+      };
+
+  void _apply(String preset, double duration) {
+    final editor = ref.read(editorProvider.notifier);
+    switch (_edge) {
+      case _AnimEdge.in_:
+        editor.applyAnimation(isIn: true, preset: preset, duration: duration);
+      case _AnimEdge.out:
+        editor.applyAnimation(
+            isIn: false, preset: preset, duration: duration);
+      case _AnimEdge.combo:
+        editor.applyComboAnimation(preset: preset, duration: duration);
+    }
+  }
+
+  void _setDuration(double value, Clip clip) {
+    setState(() {
+      switch (_edge) {
+        case _AnimEdge.in_:
+          _inDuration = value;
+        case _AnimEdge.out:
+          _outDuration = value;
+        case _AnimEdge.combo:
+          _comboDuration = value;
+      }
+    });
+    final active = _activePreset(clip);
+    if (active != null && active != kAnimNone) _apply(active, value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final clip = ref.watch(editorProvider.select((s) => s.selected))!;
+    final active = _activePreset(clip);
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Row(
+          children: [
+            for (final e in _AnimEdge.values)
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: VChip(
+                    label: e.label,
+                    selected: e == _edge,
+                    onTap: () => setState(() => _edge = e),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        const VSectionHeader('Preset'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            VChip(
+              label: 'None',
+              selected: active == kAnimNone,
+              onTap: () => _apply(kAnimNone, _duration),
+            ),
+            for (final p in kAnimationPresets)
+              VChip(
+                label: kAnimationPresetLabels[p]!,
+                selected: active == p,
+                onTap: () => _apply(p, _duration),
+              ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        const VSectionHeader('Duration'),
+        VPropertyRow(
+          label: 'Length',
+          child: Row(
+            children: [
+              Expanded(
+                child: Slider(
+                  value: _duration
+                      .clamp(kAnimationMinDuration, kAnimationMaxDuration)
+                      .toDouble(),
+                  min: kAnimationMinDuration,
+                  max: kAnimationMaxDuration,
+                  onChanged: (v) => _setDuration(v, clip),
+                ),
+              ),
+              SizedBox(
+                width: 48,
+                child: Text('${_duration.toStringAsFixed(1)}s',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 12)),
+              ),
+            ],
           ),
         ),
       ],
