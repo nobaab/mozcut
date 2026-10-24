@@ -10,6 +10,7 @@ import '../../domain/models/color_filter_presets.dart';
 import '../../domain/models/effect_presets.dart';
 import '../../domain/models/export_settings.dart';
 import '../../domain/models/media_type.dart';
+import '../../domain/models/sfx_presets.dart';
 import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
 import '../../domain/models/transition_presets.dart';
@@ -995,6 +996,26 @@ class FfmpegEngine implements Engine {
     if (result.exitCode != 0) {
       throw EngineException('audio extraction failed: ${result.stderr}');
     }
+  }
+
+  @override
+  Future<String> generateSfx(String id) async {
+    final preset =
+        kSfxPresets.where((p) => p.id == id).firstOrNull;
+    if (preset == null) {
+      throw EngineException('unknown sound effect: $id');
+    }
+
+    final dir = _mediaCacheDir();
+    final outputPath = '${dir.path}/sfx_${preset.id}.wav';
+    if (File(outputPath).existsSync()) return outputPath;
+
+    final result =
+        await Process.run(_ffmpeg, preset.buildArgs(outputPath));
+    if (result.exitCode != 0 || !File(outputPath).existsSync()) {
+      throw EngineException('sfx generation failed: ${result.stderr}');
+    }
+    return outputPath;
   }
 
   @override

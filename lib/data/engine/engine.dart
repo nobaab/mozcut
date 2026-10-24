@@ -82,6 +82,16 @@ abstract class Engine {
     required String outputPath,
   });
 
+  /// Renders (or returns the cached path of) a built-in sound effect/tone
+  /// from the Audio panel's catalogue (see `kSfxPresets`), identified by
+  /// [id] (e.g. `'beep'`, `'whoosh'`). Since no audio is bundled, the first
+  /// call for a given [id] synthesizes it with ffmpeg's `lavfi` virtual
+  /// inputs (a sine tone or coloured noise, per that preset's definition)
+  /// and caches the result on disk; later calls with the same [id] return
+  /// instantly. Throws [EngineException] if [id] isn't in the catalogue or
+  /// ffmpeg fails.
+  Future<String> generateSfx(String id);
+
   /// Extracts [count] JPEG frame thumbnails evenly spaced across [clip]'s
   /// trimmed region (inPoint..outPoint), each scaled to [height] tall
   /// (width preserves source aspect). Returns their file paths in timeline
