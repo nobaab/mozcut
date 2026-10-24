@@ -169,11 +169,14 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
   }
 
   /// Trackpad: a pinch (scale != 1) zooms around the pointer; otherwise a
-  /// plain two-finger scroll pans. The horizontal component of a plain
-  /// scroll is already handled by `SingleChildScrollView`'s own trackpad
-  /// drag support, so only the vertical component is applied here — that
-  /// way a straight up/down swipe also scrubs the timeline sideways,
-  /// matching CapCut.
+  /// plain two-finger scroll pans the timeline horizontally. We own ALL
+  /// panning here (the scroll view itself is [NeverScrollableScrollPhysics])
+  /// so there is exactly one pan channel and nothing arbitrates against the
+  /// clip-drag recognizers — the "separate channels" model from
+  /// docs/TIMELINE-BEHAVIOR.md §1. Both axes drive horizontal scroll: a
+  /// natural left/right two-finger swipe pans, and a straight up/down swipe
+  /// also scrubs sideways (CapCut convenience) — whichever axis the swipe is
+  /// dominantly along wins, so a diagonal doesn't double up.
   void _handlePanZoomUpdate(PointerPanZoomUpdateEvent event) {
     final scaleRatio = event.scale / _panZoomLastScale;
     _panZoomLastScale = event.scale;
@@ -182,16 +185,20 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
       _zoomBy(factor: scaleRatio, cursorDx: event.localPosition.dx);
       return;
     }
+    final d = event.panDelta;
     if (_zoomModifierDown()) {
       // Ctrl/Cmd + two-finger scroll (no pinch): drive the zoom off the
       // vertical pan delta instead of panning.
       _zoomBy(
-        factor: math.exp(-event.panDelta.dy * 0.01),
+        factor: math.exp(-d.dy * 0.01),
         cursorDx: event.localPosition.dx,
       );
       return;
     }
-    _panBy(event.panDelta.dy);
+    // Horizontal swipe → pan by -dx (content follows the fingers); vertical
+    // swipe → pan by dy. Use the dominant axis so a diagonal swipe doesn't
+    // apply both at once.
+    _panBy(d.dx.abs() >= d.dy.abs() ? -d.dx : d.dy);
   }
 
   @override
@@ -347,6 +354,12 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                       child: SingleChildScrollView(
                         controller: _hScroll,
                         scrollDirection: Axis.horizontal,
+                        // All panning is driven by the parent [Listener]
+                        // (_handlePanZoomUpdate / _handlePointerSignal) via
+                        // _hScroll.jumpTo, so the scroll view must not run its
+                        // own gesture recognizer — otherwise a trackpad swipe
+                        // is handled by BOTH, which fights and feels janky.
+                        physics: const NeverScrollableScrollPhysics(),
                         child: SizedBox(
                           width: contentW.toDouble(),
                           child: Stack(
