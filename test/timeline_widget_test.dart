@@ -8,6 +8,7 @@ import 'package:mozcut/domain/models/clip.dart';
 import 'package:mozcut/domain/models/export_settings.dart';
 import 'package:mozcut/domain/models/sticker_overlay.dart';
 import 'package:mozcut/domain/models/text_overlay.dart';
+import 'package:mozcut/ui/features/editor/view_models/editor_ui_state.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
 import 'package:mozcut/ui/features/editor/views/timeline_panel.dart';
 
@@ -134,8 +135,7 @@ void main() {
     expect(find.text('clip.mp4'), findsNWidgets(2));
   });
 
-  test('updateTransform mutates only the selected clip, partial updates keep the rest',
-      () async {
+  test('updateTransform mutates only the selected clip, partial updates keep the rest', () async {
     final container = ProviderContainer(
       overrides: [engineProvider.overrideWithValue(FakeEngine())],
     );
@@ -173,6 +173,91 @@ void main() {
     expect(reset.posY, 0.0);
     expect(reset.rotation, 0.0);
     expect(reset.flipH, isFalse);
+  });
+
+  group('zoomAnchoredScrollOffset', () {
+    test('keeps the time under the cursor stationary when zooming in', () {
+      // At 40px/s, scrolled 100px in, with the cursor 50px into the
+      // viewport: the cursor sits over t = (100 + 50) / 40 = 3.75s.
+      // Zooming to 80px/s, that instant should now be at 3.75 * 80 = 300px
+      // of content — so the new scroll offset must be 300 - 50 = 250.
+      final offset = zoomAnchoredScrollOffset(
+        oldOffset: 100,
+        cursorDx: 50,
+        oldPx: 40,
+        newPx: 80,
+        maxScrollExtent: 1000,
+      );
+      expect(offset, closeTo(250, 0.0001));
+    });
+
+    test('keeps the time under the cursor stationary when zooming out', () {
+      final offset = zoomAnchoredScrollOffset(
+        oldOffset: 250,
+        cursorDx: 50,
+        oldPx: 80,
+        newPx: 40,
+        maxScrollExtent: 1000,
+      );
+      expect(offset, closeTo(100, 0.0001));
+    });
+
+    test('is a no-op when the zoom level does not change', () {
+      final offset = zoomAnchoredScrollOffset(
+        oldOffset: 123,
+        cursorDx: 50,
+        oldPx: 40,
+        newPx: 40,
+        maxScrollExtent: 1000,
+      );
+      expect(offset, closeTo(123, 0.0001));
+    });
+
+    test('clamps to the scrollable range', () {
+      // Zooming out far enough that the anchor math would go negative.
+      final low = zoomAnchoredScrollOffset(
+        oldOffset: 0,
+        cursorDx: 500,
+        oldPx: 40,
+        newPx: 6,
+        maxScrollExtent: 1000,
+      );
+      expect(low, 0);
+
+      // Zooming in far enough that the anchor math would overshoot the end.
+      final high = zoomAnchoredScrollOffset(
+        oldOffset: 900,
+        cursorDx: 0,
+        oldPx: 40,
+        newPx: 240,
+        maxScrollExtent: 1000,
+      );
+      expect(high, 1000);
+    });
+  });
+
+  group('TimelineZoom', () {
+    test('zoomIn/zoomOut and set clamp to [6, 240] px/sec', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(timelineZoomProvider.notifier);
+
+      expect(container.read(timelineZoomProvider), 40);
+
+      notifier.set(1000);
+      expect(container.read(timelineZoomProvider), 240);
+
+      notifier.set(-5);
+      expect(container.read(timelineZoomProvider), 6);
+
+      notifier.set(50);
+      notifier.zoomOut();
+      expect(container.read(timelineZoomProvider), closeTo(50 / 1.3, 0.0001));
+
+      notifier.set(50);
+      notifier.zoomIn();
+      expect(container.read(timelineZoomProvider), closeTo(50 * 1.3, 0.0001));
+    });
   });
 
   test('updateTransform clamps scale away from zero', () async {
