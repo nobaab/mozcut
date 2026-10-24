@@ -258,16 +258,16 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     // at least one overlay to show.
     final showTextLane = textOverlays.isNotEmpty;
 
-    // Playhead in timeline seconds, derived from the preview position within
-    // the selected clip.
-    double playheadT = 0;
+    // Playhead base: the selected clip and its timeline offset, read
+    // *statically* here (this build deliberately does NOT watch
+    // playheadProvider). The live playhead position ticks many times a second
+    // during playback; isolating it into [_Playhead] below means that ticking
+    // repaints only the thin scrubber overlay, not the whole timeline and
+    // every clip bar/filmstrip/waveform underneath it — which is what made
+    // clicking and selecting feel laggy while the preview was playing.
     final selIdx = state.selectedIndex;
-    if (selIdx >= 0) {
-      final clip = state.clips[selIdx];
-      final within = (ref.watch(playheadProvider) - clip.inPoint)
-          .clamp(0.0, clip.duration);
-      playheadT = starts[selIdx] + within;
-    }
+    final model.Clip? playheadClip = selIdx >= 0 ? state.clips[selIdx] : null;
+    final double playheadStart = selIdx >= 0 ? starts[selIdx] : 0;
 
     final isEmpty = state.clips.isEmpty &&
         audioClips.isEmpty &&
@@ -615,35 +615,13 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                               ),
                               // Playhead: spans the ruler and every lane
                               // beneath it, with a small grab handle sitting
-                              // over the ruler. Purely visual (IgnorePointer)
-                              // so it never steals the ruler's own scrub
-                              // gesture, or any lane's tap/drag, from
-                              // underneath it.
-                              IgnorePointer(
-                                child: Stack(
-                                  children: [
-                                    Positioned(
-                                      left: playheadT * px - 1,
-                                      top: 0,
-                                      bottom: 0,
-                                      child: Container(
-                                          width: 2, color: AppColors.accent),
-                                    ),
-                                    Positioned(
-                                      left: playheadT * px - 6,
-                                      top: 2,
-                                      child: Container(
-                                        width: 12,
-                                        height: 9,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(2),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                              // over the ruler. Isolated into its own
+                              // playhead-watching widget (see [_Playhead]) so
+                              // it repaints on its own during playback.
+                              _Playhead(
+                                px: px,
+                                start: playheadStart,
+                                clip: playheadClip,
                               ),
                             ],
                           ),
@@ -857,6 +835,62 @@ class _Ruler extends StatelessWidget {
     final m = (s ~/ 60).toString().padLeft(2, '0');
     final sec = (s % 60).toString().padLeft(2, '0');
     return '$m:$sec';
+  }
+}
+
+/// The scrubber line + grab handle, spanning the ruler and every lane. This is
+/// the ONLY widget that watches [playheadProvider]; the rest of the timeline
+/// reads the selection statically. Keeping it separate means the playhead
+/// ticking during playback repaints just these two thin boxes, not the whole
+/// timeline (every clip bar, filmstrip and waveform) — otherwise clicking and
+/// selecting feel laggy while the preview plays. Purely visual
+/// ([IgnorePointer]) so it never steals the ruler's scrub gesture or a lane's
+/// tap/drag from underneath.
+class _Playhead extends ConsumerWidget {
+  const _Playhead({required this.px, required this.start, required this.clip});
+
+  final double px;
+
+  /// The selected clip's start offset on the timeline, in seconds.
+  final double start;
+
+  /// The selected clip (its `inPoint`/`duration` map the live preview position
+  /// into a timeline position), or null when nothing is selected.
+  final model.Clip? clip;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    double playheadT = 0;
+    final c = clip;
+    if (c != null) {
+      final within =
+          (ref.watch(playheadProvider) - c.inPoint).clamp(0.0, c.duration);
+      playheadT = start + within;
+    }
+    return IgnorePointer(
+      child: Stack(
+        children: [
+          Positioned(
+            left: playheadT * px - 1,
+            top: 0,
+            bottom: 0,
+            child: Container(width: 2, color: AppColors.accent),
+          ),
+          Positioned(
+            left: playheadT * px - 6,
+            top: 2,
+            child: Container(
+              width: 12,
+              height: 9,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
