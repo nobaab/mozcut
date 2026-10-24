@@ -253,10 +253,12 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     final timelineSeconds =
         math.max(total, math.max(audioEnd, math.max(overlayEnd, textEnd)));
 
-    // CapCut hides a track entirely once it has nothing on it — the text
-    // lane (and its header row, see _trackHeader) only appears once there's
-    // at least one overlay to show.
+    // CapCut hides a track entirely once it has nothing on it — each lane
+    // (and its header row, see _trackHeader) only appears once it has at least
+    // one item. The video track always shows.
     final showTextLane = textOverlays.isNotEmpty;
+    final showOverlayLane = videoOverlays.isNotEmpty;
+    final showAudioLane = audioClips.isNotEmpty;
 
     // The live playhead is read only inside [_Playhead] below (which alone
     // watches playheadProvider). This build deliberately does NOT watch it, so
@@ -276,7 +278,10 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
         children: [
           SizedBox(
               width: TimelinePanel._headerWidth,
-              child: _trackHeader(showTextLane: showTextLane)),
+              child: _trackHeader(
+                  showTextLane: showTextLane,
+                  showOverlayLane: showOverlayLane,
+                  showAudioLane: showAudioLane)),
           const VerticalDivider(width: 1, thickness: 1, color: AppColors.line),
           Expanded(
             child: isEmpty
@@ -498,110 +503,115 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                               ],
                                             ),
                                           ),
-                                          const SizedBox(
-                                              height: TimelinePanel._laneGap),
-                                          // The overlay lane: video overlays
-                                          // (picture-in-picture) float
-                                          // freely, positioned by their own
-                                          // `startTime` (unlike the video
-                                          // track, they don't shift each
-                                          // other) — same treatment as the
-                                          // audio lane below.
-                                          SizedBox(
-                                            height: TimelinePanel
-                                                ._overlayLaneHeight,
-                                            width: contentW.toDouble(),
-                                            child: Stack(
-                                              children: [
-                                                Positioned.fill(
-                                                  child: GestureDetector(
-                                                    behavior: HitTestBehavior
-                                                        .opaque,
-                                                    onTapDown: (_) => ref
-                                                        .read(
-                                                            selectedVideoOverlayProvider
-                                                                .notifier)
-                                                        .set(null),
-                                                  ),
-                                                ),
-                                                for (var i = 0;
-                                                    i <
-                                                        videoOverlays.length;
-                                                    i++)
-                                                  Positioned(
-                                                    key: ValueKey(
-                                                        videoOverlays[i].id),
-                                                    left: videoOverlays[i]
-                                                            .startTime *
-                                                        px,
-                                                    width: videoOverlays[i]
-                                                            .duration *
-                                                        px,
-                                                    top: 0,
-                                                    bottom: 0,
-                                                    child: _VideoOverlaySlot(
-                                                      overlay:
-                                                          videoOverlays[i],
-                                                      index: i,
-                                                      px: px,
-                                                      selected: videoOverlays[
-                                                                  i]
-                                                              .id ==
-                                                          selectedOverlayId,
+                                          if (showOverlayLane) ...[
+                                            const SizedBox(
+                                                height:
+                                                    TimelinePanel._laneGap),
+                                            // The overlay lane: video overlays
+                                            // (picture-in-picture) float
+                                            // freely, positioned by their own
+                                            // `startTime` (unlike the video
+                                            // track, they don't shift each
+                                            // other) — same treatment as the
+                                            // audio lane below.
+                                            SizedBox(
+                                              height: TimelinePanel
+                                                  ._overlayLaneHeight,
+                                              width: contentW.toDouble(),
+                                              child: Stack(
+                                                children: [
+                                                  Positioned.fill(
+                                                    child: GestureDetector(
+                                                      behavior: HitTestBehavior
+                                                          .opaque,
+                                                      onTapDown: (_) => ref
+                                                          .read(
+                                                              selectedVideoOverlayProvider
+                                                                  .notifier)
+                                                          .set(null),
                                                     ),
                                                   ),
-                                              ],
+                                                  for (var i = 0;
+                                                      i < videoOverlays.length;
+                                                      i++)
+                                                    Positioned(
+                                                      key: ValueKey(
+                                                          videoOverlays[i].id),
+                                                      left: videoOverlays[i]
+                                                              .startTime *
+                                                          px,
+                                                      width: videoOverlays[i]
+                                                              .duration *
+                                                          px,
+                                                      top: 0,
+                                                      bottom: 0,
+                                                      child: _VideoOverlaySlot(
+                                                        overlay:
+                                                            videoOverlays[i],
+                                                        index: i,
+                                                        px: px,
+                                                        selected:
+                                                            videoOverlays[i]
+                                                                    .id ==
+                                                                selectedOverlayId,
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(
-                                              height: TimelinePanel._laneGap),
-                                          // The audio lane: clips float
-                                          // freely, positioned by their own
-                                          // `start` (unlike the video track,
-                                          // they don't shift each other).
-                                          SizedBox(
-                                            height: TimelinePanel
-                                                ._audioLaneHeight,
-                                            width: contentW.toDouble(),
-                                            child: Stack(
-                                              children: [
-                                                Positioned.fill(
-                                                  child: GestureDetector(
-                                                    behavior: HitTestBehavior
-                                                        .opaque,
-                                                    onTapDown: (_) => ref
-                                                        .read(
-                                                            selectedAudioClipProvider
-                                                                .notifier)
-                                                        .set(null),
-                                                  ),
-                                                ),
-                                                for (var i = 0;
-                                                    i < audioClips.length;
-                                                    i++)
-                                                  Positioned(
-                                                    key: ValueKey(
-                                                        audioClips[i].id),
-                                                    left:
-                                                        audioClips[i].start *
-                                                            px,
-                                                    width: audioClips[i]
-                                                            .duration *
-                                                        px,
-                                                    top: 0,
-                                                    bottom: 0,
-                                                    child: _AudioClipSlot(
-                                                      clip: audioClips[i],
-                                                      index: i,
-                                                      px: px,
-                                                      selected:
-                                                          audioClips[i].id ==
-                                                              selectedAudioId,
+                                          ],
+                                          if (showAudioLane) ...[
+                                            const SizedBox(
+                                                height:
+                                                    TimelinePanel._laneGap),
+                                            // The audio lane: clips float
+                                            // freely, positioned by their own
+                                            // `start` (unlike the video track,
+                                            // they don't shift each other).
+                                            SizedBox(
+                                              height: TimelinePanel
+                                                  ._audioLaneHeight,
+                                              width: contentW.toDouble(),
+                                              child: Stack(
+                                                children: [
+                                                  Positioned.fill(
+                                                    child: GestureDetector(
+                                                      behavior: HitTestBehavior
+                                                          .opaque,
+                                                      onTapDown: (_) => ref
+                                                          .read(
+                                                              selectedAudioClipProvider
+                                                                  .notifier)
+                                                          .set(null),
                                                     ),
                                                   ),
-                                              ],
+                                                  for (var i = 0;
+                                                      i < audioClips.length;
+                                                      i++)
+                                                    Positioned(
+                                                      key: ValueKey(
+                                                          audioClips[i].id),
+                                                      left: audioClips[i]
+                                                              .start *
+                                                          px,
+                                                      width: audioClips[i]
+                                                              .duration *
+                                                          px,
+                                                      top: 0,
+                                                      bottom: 0,
+                                                      child: _AudioClipSlot(
+                                                        clip: audioClips[i],
+                                                        index: i,
+                                                        px: px,
+                                                        selected: audioClips[i]
+                                                                .id ==
+                                                            selectedAudioId,
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
                                             ),
-                                          ),
+                                          ],
                                         ],
                                       ),
                                     ),
@@ -630,10 +640,16 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
   /// tall as (and separated by the same gap as) its counterpart lane in the
   /// scrolling content — see the matching `TimelinePanel._xLaneHeight`/
   /// `_laneGap` constants used on both sides — so the controls here always
-  /// sit level with the right track. [showTextLane] must mirror whatever the
-  /// content side passed for the same build (see `_buildTimeline`), so the
-  /// text row appears/disappears in lockstep with its lane.
-  Widget _trackHeader({required bool showTextLane}) => Column(
+  /// sit level with the right track. [showTextLane]/[showOverlayLane]/
+  /// [showAudioLane] must mirror whatever the content side passed for the same
+  /// build (see `_buildTimeline`), so each row appears/disappears in lockstep
+  /// with its lane.
+  Widget _trackHeader({
+    required bool showTextLane,
+    required bool showOverlayLane,
+    required bool showAudioLane,
+  }) =>
+      Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: TimelinePanel._rulerHeight),
@@ -708,52 +724,56 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                     ),
                   ),
                 ),
-                const SizedBox(height: TimelinePanel._laneGap),
-                SizedBox(
-                  height: TimelinePanel._overlayLaneHeight,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: [
-                        Icon(Icons.picture_in_picture_alt_outlined,
-                            size: 15,
-                            color: Colors.white.withValues(alpha: 0.5)),
-                        const SizedBox(width: 6),
-                        const Expanded(
-                          child: Text('Overlay',
-                              style: TextStyle(fontSize: 11)),
-                        ),
-                        _hdrIcon(Icons.lock_outline),
-                        const SizedBox(width: 8),
-                        _hdrIcon(Icons.visibility_outlined),
-                      ],
+                if (showOverlayLane) ...[
+                  const SizedBox(height: TimelinePanel._laneGap),
+                  SizedBox(
+                    height: TimelinePanel._overlayLaneHeight,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.picture_in_picture_alt_outlined,
+                              size: 15,
+                              color: Colors.white.withValues(alpha: 0.5)),
+                          const SizedBox(width: 6),
+                          const Expanded(
+                            child: Text('Overlay',
+                                style: TextStyle(fontSize: 11)),
+                          ),
+                          _hdrIcon(Icons.lock_outline),
+                          const SizedBox(width: 8),
+                          _hdrIcon(Icons.visibility_outlined),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: TimelinePanel._laneGap),
-                SizedBox(
-                  height: TimelinePanel._audioLaneHeight,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: [
-                        Icon(Icons.av_timer,
-                            size: 15,
-                            color: Colors.white.withValues(alpha: 0.5)),
-                        const SizedBox(width: 6),
-                        const Expanded(
-                          child:
-                              Text('Audio', style: TextStyle(fontSize: 11)),
-                        ),
-                        _hdrIcon(Icons.lock_outline),
-                        const SizedBox(width: 8),
-                        _hdrIcon(Icons.volume_up_outlined),
-                        const SizedBox(width: 8),
-                        _hdrIcon(Icons.more_horiz),
-                      ],
+                ],
+                if (showAudioLane) ...[
+                  const SizedBox(height: TimelinePanel._laneGap),
+                  SizedBox(
+                    height: TimelinePanel._audioLaneHeight,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.av_timer,
+                              size: 15,
+                              color: Colors.white.withValues(alpha: 0.5)),
+                          const SizedBox(width: 6),
+                          const Expanded(
+                            child:
+                                Text('Audio', style: TextStyle(fontSize: 11)),
+                          ),
+                          _hdrIcon(Icons.lock_outline),
+                          const SizedBox(width: 8),
+                          _hdrIcon(Icons.volume_up_outlined),
+                          const SizedBox(width: 8),
+                          _hdrIcon(Icons.more_horiz),
+                        ],
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

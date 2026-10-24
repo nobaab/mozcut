@@ -156,6 +156,47 @@ void main() {
     expect(filter, contains('amix=inputs=3'));
   });
 
+  test('an audio clip longer than the video extends the timeline: video is '
+      'padded with black (tpad) and the output is bounded to the audio end',
+      () async {
+    final engine = FfmpegEngine(ffmpegPath: fakeFfmpeg, ffprobePath: fakeFfmpeg);
+    // 5s video, a 30s song on the audio lane → the project is 30s long.
+    await engine.export(
+      clips: [videoClip()],
+      outputPath: '${tmp.path}/out.mp4',
+      audioClips: [
+        AudioClip(
+            sourcePath: '/music/track.mp3',
+            sourceDuration: 30,
+            inPoint: 0,
+            outPoint: 30),
+      ],
+    );
+
+    final filter = capturedFilter();
+    // Video padded with 25s (30 - 5) of black so the song isn't cut off.
+    expect(filter, contains('tpad=stop_duration=25.000000'));
+    // Mix runs to the longest input, not the (short) main clip audio.
+    expect(filter, contains('amix=inputs=2:duration=longest'));
+
+    // The output `-t` bound is the full 30s timeline, not the 5s video.
+    final args = capturedArgs();
+    final tIndex = args.lastIndexOf('-t');
+    expect(tIndex, greaterThanOrEqualTo(0));
+    expect(args[tIndex + 1], '30.000');
+  });
+
+  test('a video longer than the audio is NOT padded (no tpad)', () async {
+    final engine = FfmpegEngine(ffmpegPath: fakeFfmpeg, ffprobePath: fakeFfmpeg);
+    await engine.export(
+      clips: [videoClip()], // 5s
+      outputPath: '${tmp.path}/out.mp4',
+      audioClips: [AudioClip(sourcePath: '/a.mp3', sourceDuration: 2)], // 2s
+    );
+    final filter = capturedFilter();
+    expect(filter, isNot(contains('tpad')));
+  });
+
   test('renderPreview also mixes in audioClips', () async {
     final engine = FfmpegEngine(ffmpegPath: fakeFfmpeg, ffprobePath: fakeFfmpeg);
     await engine.renderPreview(

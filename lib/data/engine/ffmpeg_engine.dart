@@ -134,7 +134,7 @@ class FfmpegEngine implements Engine {
     }
 
     final totalDuration =
-        clips.fold<double>(0, (sum, c) => sum + c.duration);
+        _timelineDurationOf(clips, audioClips, videoOverlays);
 
     final graph = await _buildFilterGraph(
       clips: clips,
@@ -145,6 +145,7 @@ class FfmpegEngine implements Engine {
       scaleFilter: settings.scaleFilter,
       canvasWidth: canvasWidth,
       canvasHeight: canvasHeight,
+      timelineDuration: totalDuration,
     );
     try {
       // GIF has no audio track and needs its own palette: ffmpeg's default
@@ -274,7 +275,7 @@ class FfmpegEngine implements Engine {
     }
 
     final totalDuration =
-        clips.fold<double>(0, (sum, c) => sum + c.duration);
+        _timelineDurationOf(clips, audioClips, videoOverlays);
     final outputPath =
         '${Directory.systemTemp.path}/mozcut_preview_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
@@ -290,6 +291,7 @@ class FfmpegEngine implements Engine {
       scaleFilter: 'scale=$_previewWidth:-2',
       canvasWidth: canvasWidth,
       canvasHeight: canvasHeight,
+      timelineDuration: totalDuration,
     );
     try {
       final args = <String>[
@@ -346,6 +348,7 @@ class FfmpegEngine implements Engine {
     String? scaleFilter,
     int canvasWidth = 1920,
     int canvasHeight = 1080,
+    double timelineDuration = 0,
   }) async {
     File? srtFile;
     final overlayFiles = <File>[];
@@ -700,9 +703,24 @@ class FfmpegEngine implements Engine {
         // delayed audio pad (if its source has one) — just fold them in.
         mixLabels.addAll(overlayAudioLabels);
         final mixedLabel = 'outmix';
+        // `duration=longest` so a music track longer than the video keeps
+        // playing to its end (the video is padded to match, below) instead of
+        // being cut when the main clip audio runs out.
         filter.write(
-            ';${mixLabels.map((l) => '[$l]').join()}amix=inputs=${mixLabels.length}:duration=first:normalize=0[$mixedLabel]');
+            ';${mixLabels.map((l) => '[$l]').join()}amix=inputs=${mixLabels.length}:duration=longest:normalize=0[$mixedLabel]');
         audioLabel = '[$mixedLabel]';
+      }
+
+      // If the audio lane or an overlay runs past the last video clip, pad the
+      // video track with black to the full timeline length so that extra
+      // audio/overlay time is kept (the amix above already uses
+      // duration=longest). No-op when the video is the longest track.
+      final videoSum = clips.fold<double>(0, (s, c) => s + c.duration);
+      if (timelineDuration - videoSum > 0.01) {
+        final outLabel = '[vpad]';
+        filter.write(';${videoLabel}tpad=stop_duration='
+            '${_fmtFilterNum(timelineDuration - videoSum)}$outLabel');
+        videoLabel = outLabel;
       }
 
       // Optional resize LAST — after captions and every overlay have
@@ -938,6 +956,28 @@ class FfmpegEngine implements Engine {
   /// fixed-point, so floating point division never produces scientific
   /// notation (which ffmpeg's filter parser rejects).
   static String _fmtFilterNum(double value) => value.toStringAsFixed(6);
+
+  /// The timeline's total length in seconds: the longest of the video track
+  /// (the clips, laid end to end), the audio lane, and the overlay (PiP) lane.
+  /// A long music track or a late overlay keeps playing past the last video
+  /// clip (the video track just shows black for the remainder), matching
+  /// CapCut — rather than the whole export ending when the video does.
+  static double _timelineDurationOf(
+    List<Clip> clips,
+    List<AudioClip> audioClips,
+    List<VideoOverlay> videoOverlays,
+  ) {
+    var d = clips.fold<double>(0, (s, c) => s + c.duration);
+    for (final a in audioClips) {
+      final end = a.start + a.duration;
+      if (end > d) d = end;
+    }
+    for (final o in videoOverlays) {
+      final end = o.startTime + o.duration;
+      if (end > d) d = end;
+    }
+    return d;
+  }
 
   /// Rounds [px] to the nearest even integer ≥ 2 — a size in whole pixels
   /// safe to hand to `scale`/`overlay` (H.264 and most filters want even
