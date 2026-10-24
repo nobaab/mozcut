@@ -426,6 +426,37 @@ void main() {
     });
   });
 
+  group('setSelectedFilterIntensity', () {
+    test('defaults to full intensity', () {
+      expect(clipAt(0).filterIntensity, 1.0);
+    });
+
+    test('sets the filter intensity on the selected clip', () {
+      editor.setSelectedFilterIntensity(0.4);
+      expect(clipAt(0).filterIntensity, 0.4);
+    });
+
+    test('clamps out-of-range values', () {
+      editor.setSelectedFilterIntensity(5.0);
+      expect(clipAt(0).filterIntensity, 1.0);
+      editor.setSelectedFilterIntensity(-1.0);
+      expect(clipAt(0).filterIntensity, 0.0);
+    });
+
+    test('does not affect other clips', () {
+      editor.setSelectedFilterIntensity(0.3);
+      expect(clipAt(1).filterIntensity, 1.0);
+      expect(clipAt(2).filterIntensity, 1.0);
+    });
+
+    test('does nothing when no clip is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.setSelectedFilterIntensity(0.5), returnsNormally);
+    });
+  });
+
   group('setSelectedEffect', () {
     test('sets the effect on the selected clip', () {
       editor.setSelectedEffect('Gaussian Blur');
@@ -463,6 +494,44 @@ void main() {
       expect(clipAt(0).effectId, 'Vignette');
       editor.undo();
       expect(clipAt(0).effectId, isNull);
+    });
+  });
+
+  group('setSelectedEffectIntensity', () {
+    test('defaults to full intensity', () {
+      expect(clipAt(0).effectIntensity, 1.0);
+    });
+
+    test('sets the effect intensity on the selected clip', () {
+      editor.setSelectedEffectIntensity(0.6);
+      expect(clipAt(0).effectIntensity, 0.6);
+    });
+
+    test('clamps out-of-range values', () {
+      editor.setSelectedEffectIntensity(5.0);
+      expect(clipAt(0).effectIntensity, 1.0);
+      editor.setSelectedEffectIntensity(-1.0);
+      expect(clipAt(0).effectIntensity, 0.0);
+    });
+
+    test('does not affect other clips', () {
+      editor.setSelectedEffectIntensity(0.2);
+      expect(clipAt(1).effectIntensity, 1.0);
+      expect(clipAt(2).effectIntensity, 1.0);
+    });
+
+    test('does nothing when no clip is selected', () {
+      editor.removeSelected();
+      editor.removeSelected();
+      editor.removeSelected();
+      expect(() => editor.setSelectedEffectIntensity(0.5), returnsNormally);
+    });
+
+    test('is undoable', () {
+      editor.setSelectedEffectIntensity(0.2);
+      expect(clipAt(0).effectIntensity, 0.2);
+      editor.undo();
+      expect(clipAt(0).effectIntensity, 1.0);
     });
   });
 

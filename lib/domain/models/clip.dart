@@ -99,7 +99,9 @@ class Clip {
     double? contrast,
     double? saturation,
     this.filterId,
+    double? filterIntensity,
     this.effectId,
+    double? effectIntensity,
     this.transitionId,
     double? transitionDuration,
     this.originalSourcePath,
@@ -133,6 +135,8 @@ class Clip {
         brightness = brightness ?? 0.0,
         contrast = contrast ?? 1.0,
         saturation = saturation ?? 1.0,
+        filterIntensity = filterIntensity ?? 1.0,
+        effectIntensity = effectIntensity ?? 1.0,
         transitionDuration = transitionDuration ?? 0.5;
 
   final String id;
@@ -254,6 +258,13 @@ class Clip {
   /// both a preset and manual tweaks can be applied at once.
   String? filterId;
 
+  /// Strength of [filterId], 0 (no visible effect — the untouched source) to
+  /// 1 (the preset's full, nominal strength — the default, and the only
+  /// value that existed before this field was added). Meaningless when
+  /// [filterId] is null. See `ColorFilterPreset.ffmpegFilterChainFor`, which
+  /// this is fed into on export, for how intermediate values are rendered.
+  double filterIntensity;
+
   // ── effects ──
   // A single stylised video effect (blur, distort, grain, etc.) picked from
   // the Effects panel (`lib/ui/features/editor/views/effects_panel.dart`'s
@@ -266,6 +277,14 @@ class Clip {
   /// Name of the applied effect (a key into [kEffectPresets]), or null for
   /// none.
   String? effectId;
+
+  /// Strength of [effectId], 0 (no visible effect — the untouched source) to
+  /// 1 (the preset's full, nominal strength — the default, and the only
+  /// value that existed before this field was added). Meaningless when
+  /// [effectId] is null. [kEffectPresets] entries are functions of this
+  /// value (see `effect_presets.dart`), fed in on export.
+  double effectIntensity;
+
   // ── transition ──
   // Describes the transition that plays entering THIS clip FROM the previous
   // one — i.e. it lives on the "into" side of the cut, not the "out of" side.
@@ -362,8 +381,10 @@ class Clip {
     double? saturation,
     String? filterId,
     bool clearFilterId = false,
+    double? filterIntensity,
     String? effectId,
     bool clearEffectId = false,
+    double? effectIntensity,
     String? transitionId,
     bool clearTransitionId = false,
     double? transitionDuration,
@@ -399,7 +420,9 @@ class Clip {
         contrast: contrast ?? this.contrast,
         saturation: saturation ?? this.saturation,
         filterId: clearFilterId ? null : (filterId ?? this.filterId),
+        filterIntensity: filterIntensity ?? this.filterIntensity,
         effectId: clearEffectId ? null : (effectId ?? this.effectId),
+        effectIntensity: effectIntensity ?? this.effectIntensity,
         transitionId: clearTransitionId
             ? null
             : (transitionId ?? this.transitionId),
@@ -439,7 +462,9 @@ class Clip {
         'contrast': contrast,
         'saturation': saturation,
         'filterId': filterId,
+        'filterIntensity': filterIntensity,
         'effectId': effectId,
+        'effectIntensity': effectIntensity,
         'transitionId': transitionId,
         'transitionDuration': transitionDuration,
         'originalSourcePath': originalSourcePath,
@@ -486,7 +511,9 @@ class Clip {
         contrast: (json['contrast'] as num?)?.toDouble(),
         saturation: (json['saturation'] as num?)?.toDouble(),
         filterId: json['filterId'] as String?,
+        filterIntensity: (json['filterIntensity'] as num?)?.toDouble(),
         effectId: json['effectId'] as String?,
+        effectIntensity: (json['effectIntensity'] as num?)?.toDouble(),
         transitionId: json['transitionId'] as String?,
         transitionDuration: (json['transitionDuration'] as num?)?.toDouble(),
         originalSourcePath: json['originalSourcePath'] as String?,

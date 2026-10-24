@@ -6,6 +6,52 @@ import 'package:mozcut/domain/models/media_type.dart';
 /// toJson/fromJson round-trip (including old-manifest back-compat, matching
 /// the pattern every other Clip field follows).
 void main() {
+  group('Clip effect/filter intensity fields', () {
+    test('default to full intensity (1.0)', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);
+      expect(clip.effectIntensity, 1.0);
+      expect(clip.filterIntensity, 1.0);
+    });
+
+    test('copyWith sets effectIntensity and filterIntensity independently',
+        () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);
+      final updated =
+          clip.copyWith(effectIntensity: 0.4, filterIntensity: 0.7);
+      expect(updated.effectIntensity, 0.4);
+      expect(updated.filterIntensity, 0.7);
+    });
+
+    test('copyWith leaves intensities untouched when not passed', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10)
+          .copyWith(effectIntensity: 0.3, filterIntensity: 0.6);
+      final unchanged = clip.copyWith(scale: 2.0);
+      expect(unchanged.effectIntensity, 0.3);
+      expect(unchanged.filterIntensity, 0.6);
+    });
+
+    test(
+        'toJson/fromJson round-trips effectIntensity and filterIntensity',
+        () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10)
+          .copyWith(effectIntensity: 0.25, filterIntensity: 0.85);
+      final restored = Clip.fromJson(clip.toJson());
+      expect(restored.effectIntensity, 0.25);
+      expect(restored.filterIntensity, 0.85);
+    });
+
+    test('fromJson defaults both intensities to 1.0 when keys are absent '
+        '(old manifests)', () {
+      final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);
+      final json = clip.toJson()
+        ..remove('effectIntensity')
+        ..remove('filterIntensity');
+      final restored = Clip.fromJson(json);
+      expect(restored.effectIntensity, 1.0);
+      expect(restored.filterIntensity, 1.0);
+    });
+  });
+
   group('Clip transition fields', () {
     test('default to no transition and a 0.5s duration', () {
       final clip = Clip(sourcePath: '/a.mp4', sourceDuration: 10);

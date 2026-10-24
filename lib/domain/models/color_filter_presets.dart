@@ -29,7 +29,39 @@ class ColorFilterPreset {
     return colorBalance == null ? eq : '$eq,colorbalance=$colorBalance';
   }
 
+  /// [ffmpegFilterChain] scaled by [intensity] (0..1 — see
+  /// `Clip.filterIntensity`): at 1.0 (the default, and the only value that
+  /// existed before intensity was added) this returns exactly
+  /// [ffmpegFilterChain]'s output, byte for byte. Below that,
+  /// brightness/contrast/saturation/gamma are linearly interpolated toward
+  /// their neutral (no-op) values — 0 for brightness, 1.0 for the
+  /// multipliers — and every numeric component of [colorBalance] is scaled
+  /// toward 0, so intensity 0 reproduces the untouched source exactly.
+  String ffmpegFilterChainFor(double intensity) {
+    final i = intensity.clamp(0.0, 1.0);
+    if (i >= 1.0) return ffmpegFilterChain;
+    final eq = 'eq=brightness=${_n(brightness * i)}:'
+        'contrast=${_n(1.0 + (contrast - 1.0) * i)}:'
+        'saturation=${_n(1.0 + (saturation - 1.0) * i)}:'
+        'gamma=${_n(1.0 + (gamma - 1.0) * i)}';
+    if (colorBalance == null) return eq;
+    return '$eq,colorbalance=${_scaleColorBalance(colorBalance!, i)}';
+  }
+
   static String _n(double v) => v.toStringAsFixed(3);
+
+  /// Scales every `key=value` component of a `colorbalance` argument string
+  /// (e.g. `'rs=0.1:bs=-0.1'`) by [i], reformatting each value with [_n] —
+  /// only reached below full intensity, where no test depends on matching
+  /// the original (hand-written, variable-precision) literal formatting.
+  static String _scaleColorBalance(String spec, double i) {
+    return spec.split(':').map((pair) {
+      final eq = pair.indexOf('=');
+      final key = pair.substring(0, eq);
+      final value = double.parse(pair.substring(eq + 1));
+      return '$key=${_n(value * i)}';
+    }).join(':');
+  }
 }
 
 /// Preset name -> concrete transform, for every entry in the Filters panel

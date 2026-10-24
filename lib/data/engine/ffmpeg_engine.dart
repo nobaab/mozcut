@@ -847,7 +847,9 @@ class FfmpegEngine implements Engine {
     final preset = clip.filterId == null
         ? null
         : kColorFilterPresets[clip.filterId];
-    if (preset != null) steps.add(preset.ffmpegFilterChain);
+    if (preset != null) {
+      steps.add(preset.ffmpegFilterChainFor(clip.filterIntensity));
+    }
     if (clip.brightness != 0.0 ||
         clip.contrast != 1.0 ||
         clip.saturation != 1.0) {
@@ -864,7 +866,7 @@ class FfmpegEngine implements Engine {
     // filter chain it did before this feature existed.
     final effect =
         clip.effectId == null ? null : kEffectPresets[clip.effectId];
-    if (effect != null) steps.add(effect);
+    if (effect != null) steps.add(effect(clip.effectIntensity));
 
     // ── opacity ──
     // Applied last, over the already colour/effect-graded frame. No-op by
