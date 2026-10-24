@@ -62,7 +62,7 @@ final class StickerOverlaysProvider
   }
 }
 
-String _$stickerOverlaysHash() => r'2276c6f33c2cfb134995ef0641c7155db0539435';
+String _$stickerOverlaysHash() => r'fbd5c82f8adae84dc1739d8332316ec1c7351fe9';
 
 /// The project's emoji sticker overlays.
 ///

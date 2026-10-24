@@ -12,6 +12,7 @@ import '../../domain/models/export_settings.dart';
 import '../../domain/models/keyframe.dart';
 import '../../domain/models/media_type.dart';
 import '../../domain/models/sfx_presets.dart';
+import '../../domain/models/shape_presets.dart';
 import '../../domain/models/sticker_overlay.dart';
 import '../../domain/models/text_overlay.dart';
 import '../../domain/models/transition_presets.dart';
@@ -464,29 +465,91 @@ class FfmpegEngine implements Engine {
         }
       }
 
-      // Burn in sticker overlays the same way: an emoji is just text, one
-      // `drawtext` per sticker, chained after the title overlays. The only
-      // difference from a text overlay is the font — plain system fonts
-      // (Arial/DejaVu/Liberation, see `_resolveFont`) don't carry colour
-      // glyphs for emoji, so this resolves a colour-emoji font instead (e.g.
-      // macOS's Apple Color Emoji) and passes that as `fontfile`, *after*
-      // confirming this machine's ffmpeg can actually rasterize it — see
-      // [_resolveUsableEmojiFont] for why that check exists and isn't
-      // optional (on an unsupported build, just pointing `fontfile` at a
-      // colour-bitmap font doesn't degrade gracefully, it aborts the whole
-      // filtergraph). Fully additive: no stickers, no filter stage, and the
-      // graph is byte-for-byte what it was before this feature existed.
+      // Burn in sticker overlays, one per sticker, chained after the title
+      // overlays — each is either an *image* sticker (a user-imported file
+      // or a generated shape, composited with `overlay`) or an *emoji*
+      // sticker (just text, via `drawtext` — the original behaviour).
+      // Fully additive: no stickers, no filter stage, and the graph is
+      // byte-for-byte what it was before this feature existed.
       if (stickerOverlays.isNotEmpty) {
-        final emojiFont = await _resolveUsableEmojiFont();
+        // The emoji-capable font is only resolved the first time it's
+        // actually needed (lazily, not up front) — a project with only
+        // image stickers never pays for the capability probe
+        // [_resolveUsableEmojiFont] runs.
+        String? emojiFont;
+        var emojiFontResolved = false;
+
         for (var i = 0; i < stickerOverlays.length; i++) {
+          final sticker = stickerOverlays[i];
+
+          if (sticker.isImage) {
+            // One extra `-i` input for this sticker's image (`-loop 1` so
+            // it keeps producing frames for `overlay` to read for as long
+            // as the output runs, the same convention an image *clip*
+            // input uses above, for the same reason). Scaled to `size` (a
+            // fraction of the output frame's *height*) via `scale2ref`,
+            // whose `main_h` is the actual output frame height at run
+            // time — resolution-independent the same way `_drawtextFilter`'s
+            // `fontsize=h*fraction` is. `scale2ref`'s second output is the
+            // untouched video pad, which becomes the new running
+            // `videoLabel`. Optionally rotated (`c=none` keeps the corners
+            // exposed by rotation transparent instead of filling them),
+            // then composited with `overlay`, anchored at its `x`/`y`
+            // center, windowed with `enable='between(t,start,end)'` exactly
+            // like every other overlay on this timeline.
+            inputArgs.addAll(['-loop', '1', '-i', sticker.imagePath!]);
+            final imgInput = nextInputIndex++;
+
+            final fmtLabel = '[stkfmt$i]';
+            filter.write(';[$imgInput:v]format=rgba$fmtLabel');
+
+            final scaledLabel = '[stksc$i]';
+            final refLabel = '[stkref$i]';
+            filter.write(';$fmtLabel${videoLabel}scale2ref=w=-2:h='
+                "'main_h*${_fmtFilterNum(sticker.size)}'$scaledLabel$refLabel");
+            videoLabel = refLabel;
+
+            var imagePad = scaledLabel;
+            if (sticker.rotation != 0) {
+              final radians = sticker.rotation * 3.141592653589793 / 180.0;
+              final rotLabel = '[stkrot$i]';
+              filter.write(';${imagePad}rotate=${_fmtFilterNum(radians)}:'
+                  'ow=rotw(${_fmtFilterNum(radians)}):'
+                  'oh=roth(${_fmtFilterNum(radians)}):c=none$rotLabel');
+              imagePad = rotLabel;
+            }
+
+            final nextLabel = '[vimg$i]';
+            filter.write(';$videoLabel${imagePad}overlay=x='
+                "'main_w*${_fmtFilterNum(sticker.x)}-overlay_w/2':y="
+                "'main_h*${_fmtFilterNum(sticker.y)}-overlay_h/2':enable="
+                "'between(t,${sticker.start.toStringAsFixed(3)},"
+                "${sticker.end.toStringAsFixed(3)})'$nextLabel");
+            videoLabel = nextLabel;
+            continue;
+          }
+
+          // The only difference from a text overlay is the font — plain
+          // system fonts (Arial/DejaVu/Liberation, see `_resolveFont`) don't
+          // carry colour glyphs for emoji, so this resolves a colour-emoji
+          // font instead (e.g. macOS's Apple Color Emoji) and passes that as
+          // `fontfile`, *after* confirming this machine's ffmpeg can
+          // actually rasterize it — see [_resolveUsableEmojiFont] for why
+          // that check exists and isn't optional (on an unsupported build,
+          // just pointing `fontfile` at a colour-bitmap font doesn't
+          // degrade gracefully, it aborts the whole filtergraph).
+          if (!emojiFontResolved) {
+            emojiFont = await _resolveUsableEmojiFont();
+            emojiFontResolved = true;
+          }
           final stickerFile = File(
               '${Directory.systemTemp.path}/mozcut_sticker_${DateTime.now().millisecondsSinceEpoch}_$i.txt');
-          await stickerFile.writeAsString(stickerOverlays[i].emoji);
+          await stickerFile.writeAsString(sticker.emoji ?? '');
           overlayFiles.add(stickerFile);
 
           final nextLabel = '[vk$i]';
           filter.write(
-              ';$videoLabel${_drawtextFilter(_asTextOverlay(stickerOverlays[i]), stickerFile, emojiFont)}$nextLabel');
+              ';$videoLabel${_drawtextFilter(_asTextOverlay(sticker), stickerFile, emojiFont)}$nextLabel');
           videoLabel = nextLabel;
         }
       }
@@ -1033,7 +1096,7 @@ class FfmpegEngine implements Engine {
   /// logic as title burn-in (an emoji sticker's `x`/`y` are its anchor
   /// *center*, same as a center-aligned text overlay's).
   static TextOverlay _asTextOverlay(StickerOverlay sticker) => TextOverlay(
-        text: sticker.emoji,
+        text: sticker.emoji ?? '',
         start: sticker.start,
         end: sticker.end,
         fontSize: sticker.size,
@@ -1206,6 +1269,24 @@ class FfmpegEngine implements Engine {
         await Process.run(_ffmpeg, preset.buildArgs(outputPath));
     if (result.exitCode != 0 || !File(outputPath).existsSync()) {
       throw EngineException('sfx generation failed: ${result.stderr}');
+    }
+    return outputPath;
+  }
+
+  @override
+  Future<String> generateShape(String id) async {
+    final preset = kShapePresets.where((p) => p.id == id).firstOrNull;
+    if (preset == null) {
+      throw EngineException('unknown shape: $id');
+    }
+
+    final dir = _mediaCacheDir();
+    final outputPath = '${dir.path}/shape_${preset.id}.png';
+    if (File(outputPath).existsSync()) return outputPath;
+
+    final result = await Process.run(_ffmpeg, preset.buildArgs(outputPath));
+    if (result.exitCode != 0 || !File(outputPath).existsSync()) {
+      throw EngineException('shape generation failed: ${result.stderr}');
     }
     return outputPath;
   }

@@ -1,25 +1,74 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../data/engine/ffmpeg_engine.dart';
+import '../../../../domain/models/media_type.dart';
+import '../../../../domain/models/shape_presets.dart';
 import '../../../../domain/models/sticker_overlay.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/app_spacing.dart';
 import '../../../core/widgets/buttons.dart';
 import '../../../core/widgets/chips.dart';
 import '../../../core/widgets/fields.dart';
+import '../view_models/editor_view_model.dart';
 import '../view_models/sticker_overlays_view_model.dart';
 
-/// A single entry in the sticker catalogue. Emoji categories render the
-/// [emoji] glyph directly; non-emoji categories (e.g. Trending image packs)
-/// are placeholders until real sticker art ships.
-class _Sticker {
-  const _Sticker(this.emoji, [this.label]);
+/// Where the player's playhead currently sits on the *timeline* — the same
+/// seconds [StickerOverlay.start] is measured in, not the per-clip source
+/// seconds [Playhead] itself stores. Identical to (and kept in sync with)
+/// `audio_panel.dart`'s `_playheadTimelineSeconds` — both panels place a
+/// project-level overlay at "where the preview currently is", just on
+/// different lanes.
+///
+/// Falls back to the end of the last-placed sticker when nothing is
+/// selected, so newly-added stickers queue up after whatever's already there
+/// instead of all landing on top of each other at 0.
+double _playheadTimelineSeconds(WidgetRef ref) {
+  final editor = ref.read(editorProvider);
+  final idx = editor.selectedIndex;
+  if (idx < 0) {
+    var end = 0.0;
+    for (final s in ref.read(stickerOverlaysProvider)) {
+      if (s.end > end) end = s.end;
+    }
+    return end;
+  }
+  var start = 0.0;
+  for (var i = 0; i < idx; i++) {
+    start += editor.clips[i].duration;
+  }
+  final clip = editor.clips[idx];
+  final within =
+      (ref.read(playheadProvider) - clip.inPoint).clamp(0.0, clip.duration);
+  return start + within;
+}
 
-  /// The glyph to render, or null for an "image sticker" placeholder.
+/// A single entry in the sticker catalogue. Emoji categories render the
+/// [emoji] glyph directly; [shapeId] entries are built-in, ffmpeg-generated
+/// geometric shapes (see `kShapePresets`); everything else is a placeholder
+/// until real sticker art ships.
+class _Sticker {
+  const _Sticker(this.emoji, [this.label, this.shapeId, this.shapeIcon]);
+
+  /// The glyph to render, or null for a non-emoji entry.
   final String? emoji;
 
   /// Optional accessible/tooltip label.
   final String? label;
+
+  /// For a built-in shape, its [ShapePreset.id] — tapping generates (or
+  /// reuses the cached render of) that shape and adds it as an image
+  /// sticker. Null for emoji and not-yet-implemented placeholder entries.
+  final String? shapeId;
+
+  /// A representative icon shown for a [shapeId] entry while its real PNG
+  /// hasn't been generated yet (and as the cell's glyph either way — the
+  /// catalogue grid doesn't need to load every shape's actual pixels just to
+  /// be browsable).
+  final IconData? shapeIcon;
 }
 
 class _StickerCategory {
@@ -48,17 +97,16 @@ final _kCategories = [
     [for (final e in _kEmoji) _Sticker(e)],
   ),
   const _StickerCategory('Shapes', Icons.category_outlined, [
-    _Sticker(null, 'Circle'),
-    _Sticker(null, 'Square'),
-    _Sticker(null, 'Triangle'),
-    _Sticker(null, 'Star'),
-    _Sticker(null, 'Heart outline'),
-    _Sticker(null, 'Hexagon'),
-    _Sticker(null, 'Blob'),
-    _Sticker(null, 'Burst'),
+    // One entry per `kShapePresets` id — plain, original geometric outlines
+    // (never a copyrighted character/logo), generated on first tap by
+    // ffmpeg and cached (see `FfmpegEngine.generateShape`).
+    _Sticker(null, 'Rectangle', 'rectangle', Icons.crop_square_outlined),
+    _Sticker(null, 'Circle', 'circle', Icons.circle_outlined),
+    _Sticker(null, 'Arrow', 'arrow', Icons.arrow_forward),
+    _Sticker(null, 'Speech bubble', 'speech_bubble',
+        Icons.chat_bubble_outline),
   ]),
   const _StickerCategory('Arrows', Icons.north_east, [
-    _Sticker(null, 'Arrow right'),
     _Sticker(null, 'Arrow curve'),
     _Sticker(null, 'Arrow loop'),
     _Sticker(null, 'Pointer'),
@@ -83,23 +131,32 @@ final _kCategories = [
   ]),
 ];
 
-/// The Stickers tab: a searchable, categorised catalogue up top, and the
-/// project's placed stickers below. Clicking an emoji adds a [StickerOverlay]
-/// to the project (timed on the final, concatenated timeline, same as
-/// [TextOverlay]) and burns it into the export via ffmpeg's `drawtext`
-/// filter (an emoji is just text, rendered with a colour-emoji font — see
-/// `FfmpegEngine._resolveUsableEmojiFont`). Non-emoji categories are still a
-/// stub; placing real sticker art is future work.
-class StickersPanel extends StatefulWidget {
+/// The Stickers tab: a searchable, categorised catalogue up top (emoji, a
+/// handful of built-in generated shapes, and still-stubbed placeholder
+/// categories), an "Import image" action for the user's own artwork, and the
+/// project's placed stickers below.
+///
+/// Clicking an emoji adds a [StickerOverlay] to the project (timed on the
+/// final, concatenated timeline, same as [TextOverlay]) and burns it into
+/// the export via ffmpeg's `drawtext` filter (an emoji is just text,
+/// rendered with a colour-emoji font — see
+/// `FfmpegEngine._resolveUsableEmojiFont`). Clicking a shape or importing an
+/// image instead adds an *image* sticker (`StickerOverlay.imagePath`),
+/// burned in via `overlay` — see `FfmpegEngine._buildFilterGraph`. Non-shape
+/// placeholder categories are still a stub; placing real sticker art there is
+/// future work.
+class StickersPanel extends ConsumerStatefulWidget {
   const StickersPanel({super.key});
 
   @override
-  State<StickersPanel> createState() => _StickersPanelState();
+  ConsumerState<StickersPanel> createState() => _StickersPanelState();
 }
 
-class _StickersPanelState extends State<StickersPanel> {
+class _StickersPanelState extends ConsumerState<StickersPanel> {
   int _categoryIndex = 0;
   String _query = '';
+  bool _importing = false;
+  String? _generatingShapeId;
 
   @override
   Widget build(BuildContext context) {
@@ -116,10 +173,22 @@ class _StickersPanelState extends State<StickersPanel> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-          child: VTextField(
-            hint: 'Search stickers',
-            icon: Icons.search,
-            onChanged: (v) => setState(() => _query = v),
+          child: Row(
+            children: [
+              Expanded(
+                child: VTextField(
+                  hint: 'Search stickers',
+                  icon: Icons.search,
+                  onChanged: (v) => setState(() => _query = v),
+                ),
+              ),
+              const SizedBox(width: 8),
+              VButton(
+                label: _importing ? 'Importing…' : 'Import image',
+                icon: _importing ? null : Icons.add_photo_alternate_outlined,
+                onPressed: _importing ? null : () => _importImage(context),
+              ),
+            ],
           ),
         ),
         SizedBox(
@@ -170,8 +239,12 @@ class _StickersPanelState extends State<StickersPanel> {
                         childAspectRatio: 1,
                       ),
                       itemCount: stickers.length,
-                      itemBuilder: (context, i) =>
-                          _StickerCell(sticker: stickers[i]),
+                      itemBuilder: (context, i) => _StickerCell(
+                        sticker: stickers[i],
+                        busy: stickers[i].shapeId != null &&
+                            stickers[i].shapeId == _generatingShapeId,
+                        onAddShape: (id) => _addShape(context, id),
+                      ),
                     );
                   },
                 ),
@@ -192,12 +265,81 @@ class _StickersPanelState extends State<StickersPanel> {
       ],
     );
   }
+
+  // ── actions ──────────────────────────────────────────────────────────────
+
+  Future<void> _importImage(BuildContext context) async {
+    await FilePicker.skipEntitlementsChecks();
+    setState(() => _importing = true);
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: kImageExtensions,
+      );
+      if (!context.mounted) return;
+      final paths = files.map((f) => f.path).whereType<String>().toList();
+      if (paths.isEmpty) return;
+
+      final start = _playheadTimelineSeconds(ref);
+      for (final path in paths) {
+        ref.read(stickerOverlaysProvider.notifier).addImage(
+              path,
+              start: start,
+              end: start + 3,
+            );
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+              content: Text(paths.length == 1
+                  ? 'Added to the project'
+                  : 'Added ${paths.length} images to the project')));
+      }
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+  Future<void> _addShape(BuildContext context, String shapeId) async {
+    setState(() => _generatingShapeId = shapeId);
+    try {
+      final path = await ref.read(engineProvider).generateShape(shapeId);
+      if (!context.mounted) return;
+      final start = _playheadTimelineSeconds(ref);
+      ref.read(stickerOverlaysProvider.notifier).addImage(
+            path,
+            start: start,
+            end: start + 3,
+          );
+      final label =
+          kShapePresets.where((p) => p.id == shapeId).firstOrNull?.label ??
+              shapeId;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text('Added "$label" to the project')));
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text('Could not add shape: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _generatingShapeId = null);
+    }
+  }
 }
 
 class _StickerCell extends ConsumerWidget {
-  const _StickerCell({required this.sticker});
+  const _StickerCell({
+    required this.sticker,
+    required this.busy,
+    required this.onAddShape,
+  });
 
   final _Sticker sticker;
+  final bool busy;
+  final ValueChanged<String> onAddShape;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -208,17 +350,23 @@ class _StickerCell extends ConsumerWidget {
         borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
         child: InkWell(
           borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          onTap: () => _tap(context, ref),
+          onTap: busy ? null : () => _tap(context, ref),
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
               border: Border.all(color: AppColors.line),
             ),
             alignment: Alignment.center,
-            child: sticker.emoji != null
-                ? Text(sticker.emoji!, style: const TextStyle(fontSize: 26))
-                : Icon(Icons.image_outlined,
-                    size: 22, color: Colors.white.withValues(alpha: 0.35)),
+            child: busy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : sticker.emoji != null
+                    ? Text(sticker.emoji!, style: const TextStyle(fontSize: 26))
+                    : Icon(sticker.shapeIcon ?? Icons.image_outlined,
+                        size: 22, color: Colors.white.withValues(alpha: 0.6)),
           ),
         ),
       ),
@@ -227,17 +375,22 @@ class _StickerCell extends ConsumerWidget {
 
   void _tap(BuildContext context, WidgetRef ref) {
     final emoji = sticker.emoji;
-    if (emoji == null) {
+    if (emoji != null) {
+      ref.read(stickerOverlaysProvider.notifier).add(emoji);
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
-        ..showSnackBar(
-            const SnackBar(content: Text('Placing stickers — coming soon')));
+        ..showSnackBar(SnackBar(content: Text('Added $emoji to the project')));
       return;
     }
-    ref.read(stickerOverlaysProvider.notifier).add(emoji);
+    final shapeId = sticker.shapeId;
+    if (shapeId != null) {
+      onAddShape(shapeId);
+      return;
+    }
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text('Added $emoji to the project')));
+      ..showSnackBar(
+          const SnackBar(content: Text('Placing stickers — coming soon')));
   }
 }
 
@@ -273,8 +426,10 @@ class _PlacedStickersList extends ConsumerWidget {
   }
 }
 
-/// Edits one placed sticker's timing/position and lets it be deleted —
-/// mirrors `TextPanel`'s `_OverlayTile`.
+/// Edits one placed sticker's timing/position/rotation and lets it be
+/// deleted — mirrors `TextPanel`'s `_OverlayTile`. Works the same for an
+/// emoji sticker (shows its glyph) and an image sticker (shows a thumbnail
+/// of the imported/generated file).
 class _StickerTile extends ConsumerWidget {
   const _StickerTile({super.key, required this.index, required this.overlay});
 
@@ -295,7 +450,7 @@ class _StickerTile extends ConsumerWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(overlay.emoji, style: const TextStyle(fontSize: 22)),
+          _StickerThumbnail(overlay: overlay),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -352,7 +507,11 @@ class _StickerTile extends ConsumerWidget {
                             notifier.update(index, overlay.copyWith(y: d)),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
                     Expanded(
                       child: _DoubleField(
                         value: overlay.size,
@@ -360,6 +519,17 @@ class _StickerTile extends ConsumerWidget {
                         decimals: 2,
                         onChanged: (d) =>
                             notifier.update(index, overlay.copyWith(size: d)),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _DoubleField(
+                        value: overlay.rotation,
+                        prefix: 'Rot',
+                        suffix: '°',
+                        decimals: 0,
+                        onChanged: (d) => notifier.update(
+                            index, overlay.copyWith(rotation: d)),
                       ),
                     ),
                   ],
@@ -385,9 +555,42 @@ class _StickerTile extends ConsumerWidget {
   }
 }
 
-/// A small numeric field for a double value (time/position/size), editable
-/// as text. Keeps its own controller in sync with external changes the same
-/// way `inspector_panel.dart`'s `_SecondsField` does.
+/// A small preview of a placed sticker: the emoji glyph, or a thumbnail of
+/// an image sticker's file (best-effort — if the file can't be decoded,
+/// falls back to a generic icon rather than failing the whole tile).
+class _StickerThumbnail extends StatelessWidget {
+  const _StickerThumbnail({required this.overlay});
+
+  final StickerOverlay overlay;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!overlay.isImage) {
+      return Text(overlay.emoji ?? '', style: const TextStyle(fontSize: 22));
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        width: 28,
+        height: 28,
+        color: Colors.black26,
+        child: Image.file(
+          File(overlay.imagePath!),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => Icon(
+            Icons.image_outlined,
+            size: 16,
+            color: Colors.white.withValues(alpha: 0.4),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A small numeric field for a double value (time/position/size/rotation),
+/// editable as text. Keeps its own controller in sync with external changes
+/// the same way `inspector_panel.dart`'s `_SecondsField` does.
 class _DoubleField extends StatefulWidget {
   const _DoubleField({
     required this.value,

@@ -73,6 +73,9 @@ class FakeEngine implements Engine {
   Future<String> generateSfx(String id) async => '';
 
   @override
+  Future<String> generateShape(String id) async => '';
+
+  @override
   Future<List<String>> extractThumbnails({
     required Clip clip,
     required int count,
