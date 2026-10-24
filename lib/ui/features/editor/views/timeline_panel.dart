@@ -2,7 +2,9 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../domain/models/audio_clip.dart';
@@ -37,6 +39,109 @@ class TimelinePanel extends ConsumerStatefulWidget {
 
 class _TimelinePanelState extends ConsumerState<TimelinePanel> {
   bool _dragging = false;
+
+  /// The timeline's horizontal scroll position. Owned here (rather than left
+  /// implicit inside `SingleChildScrollView`) so wheel/trackpad handling can
+  /// read and adjust it directly, including compensating the offset when a
+  /// zoom gesture changes the content width.
+  final ScrollController _hScroll = ScrollController();
+
+  /// The cumulative scale reported by the current trackpad pinch gesture, as
+  /// of the last [_handlePanZoomUpdate] call — `PointerPanZoomUpdateEvent
+  /// .scale` is cumulative since the gesture started, not incremental, so
+  /// this is needed to derive a per-frame ratio.
+  double _panZoomLastScale = 1.0;
+
+  @override
+  void dispose() {
+    _hScroll.dispose();
+    super.dispose();
+  }
+
+  bool _zoomModifierDown() =>
+      HardwareKeyboard.instance.isControlPressed ||
+      HardwareKeyboard.instance.isMetaPressed;
+
+  /// Scrolls the timeline horizontally by [delta] pixels, clamped to the
+  /// scrollable range.
+  void _panBy(double delta) {
+    if (delta == 0 || !_hScroll.hasClients) return;
+    final target = (_hScroll.offset + delta)
+        .clamp(0.0, _hScroll.position.maxScrollExtent);
+    _hScroll.jumpTo(target);
+  }
+
+  /// Multiplies the timeline zoom by [factor] (clamped by
+  /// [TimelineZoom.set]), keeping the instant in time under [cursorDx]
+  /// (pixels into the timeline viewport) visually stationary.
+  void _zoomBy({required double factor, required double cursorDx}) {
+    if (factor == 1 || !factor.isFinite) return;
+    final notifier = ref.read(timelineZoomProvider.notifier);
+    final oldPx = ref.read(timelineZoomProvider);
+    notifier.set(oldPx * factor);
+    final newPx = ref.read(timelineZoomProvider);
+    if (newPx == oldPx || !_hScroll.hasClients) return;
+
+    final oldOffset = _hScroll.offset;
+    // The content width (and so maxScrollExtent) only reflects the new zoom
+    // after this frame's layout runs, so defer the compensating jump.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_hScroll.hasClients) return;
+      final target = zoomAnchoredScrollOffset(
+        oldOffset: oldOffset,
+        cursorDx: cursorDx,
+        oldPx: oldPx,
+        newPx: newPx,
+        maxScrollExtent: _hScroll.position.maxScrollExtent,
+      );
+      _hScroll.jumpTo(target);
+    });
+  }
+
+  /// Real mouse wheel: Ctrl/Cmd+scroll zooms around the cursor; a plain
+  /// scroll pans the timeline. A mouse wheel only ever reports a vertical
+  /// delta, so that's remapped to horizontal panning here (the built-in
+  /// `SingleChildScrollView` only reacts to the horizontal component, which
+  /// a plain mouse never sends).
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (_zoomModifierDown()) {
+      _zoomBy(
+        factor: math.exp(-event.scrollDelta.dy * 0.0025),
+        cursorDx: event.localPosition.dx,
+      );
+    } else {
+      _panBy(event.scrollDelta.dx != 0
+          ? event.scrollDelta.dx
+          : event.scrollDelta.dy);
+    }
+  }
+
+  /// Trackpad: a pinch (scale != 1) zooms around the pointer; otherwise a
+  /// plain two-finger scroll pans. The horizontal component of a plain
+  /// scroll is already handled by `SingleChildScrollView`'s own trackpad
+  /// drag support, so only the vertical component is applied here — that
+  /// way a straight up/down swipe also scrubs the timeline sideways,
+  /// matching CapCut.
+  void _handlePanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    final scaleRatio = event.scale / _panZoomLastScale;
+    _panZoomLastScale = event.scale;
+    final pinching = (scaleRatio - 1.0).abs() > 0.0005;
+    if (pinching) {
+      _zoomBy(factor: scaleRatio, cursorDx: event.localPosition.dx);
+      return;
+    }
+    if (_zoomModifierDown()) {
+      // Ctrl/Cmd + two-finger scroll (no pinch): drive the zoom off the
+      // vertical pan delta instead of panning.
+      _zoomBy(
+        factor: math.exp(-event.panDelta.dy * 0.01),
+        cursorDx: event.localPosition.dx,
+      );
+      return;
+    }
+    _panBy(event.panDelta.dy);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -135,7 +240,12 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                         .clamp(c.maxWidth, double.infinity);
                     void scrub(double localDx) => _scrubToTimelineSeconds(
                         ref, state, starts, localDx / px);
-                    return SingleChildScrollView(
+                    return Listener(
+                      onPointerSignal: _handlePointerSignal,
+                      onPointerPanZoomStart: (_) => _panZoomLastScale = 1.0,
+                      onPointerPanZoomUpdate: _handlePanZoomUpdate,
+                      child: SingleChildScrollView(
+                      controller: _hScroll,
                       scrollDirection: Axis.horizontal,
                       child: SizedBox(
                         width: contentW.toDouble(),
@@ -306,6 +416,7 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                           ],
                         ),
                       ),
+                      ),
                     );
                   }),
           ),
@@ -406,6 +517,24 @@ class _Ruler extends StatelessWidget {
     final sec = (s % 60).toString().padLeft(2, '0');
     return '$m:$sec';
   }
+}
+
+/// Computes the horizontal scroll offset that keeps the instant in time under
+/// the pointer visually stationary after a zoom change. [cursorDx] is the
+/// pointer's position in pixels within the timeline *viewport* (not the
+/// scrolled content); [oldOffset]/[oldPx] describe the scroll/zoom state just
+/// before the change, and [newPx] the zoom level just after. The result is
+/// clamped to `[0, maxScrollExtent]`.
+double zoomAnchoredScrollOffset({
+  required double oldOffset,
+  required double cursorDx,
+  required double oldPx,
+  required double newPx,
+  required double maxScrollExtent,
+}) {
+  final timeAtCursor = (oldOffset + cursorDx) / oldPx;
+  final target = timeAtCursor * newPx - cursorDx;
+  return target.clamp(0.0, maxScrollExtent);
 }
 
 /// Moves the playhead to the position under a click/drag on the ruler or
