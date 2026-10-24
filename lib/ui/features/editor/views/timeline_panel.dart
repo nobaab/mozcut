@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../domain/models/audio_clip.dart';
 import '../../../../domain/models/clip.dart' as model;
 import '../../../../domain/models/media_type.dart';
+import '../../../../domain/models/text_overlay.dart';
 import '../../../../domain/models/video_overlay.dart';
 import '../../../core/app_colors.dart';
 import '../../../core/widgets/split_handle.dart';
@@ -17,22 +18,26 @@ import '../view_models/audio_clips_view_model.dart';
 import '../view_models/editor_ui_state.dart';
 import '../view_models/editor_view_model.dart';
 import '../view_models/media_import.dart';
+import '../view_models/text_overlays_view_model.dart';
 import '../view_models/thumbnails_view_model.dart';
 import '../view_models/video_overlays_view_model.dart';
+import 'transitions_panel.dart' show kTransitionCatalogue;
 
 /// The timeline: a fixed track-header gutter on the left, then a horizontally
-/// scrolling ruler + video track + overlay lane + audio lane. Clips sit end
-/// to end on one video track, sized by the zoom; video overlays (the
-/// picture-in-picture lane) and audio clips both float freely on their own
-/// lane, positioned by their own `startTime`/`start`. A playhead line tracks
-/// the preview. Modelled on CapCut. Also accepts drag-and-drop of media
-/// files, routed the same way as the media browser's Import button (see
-/// `importMediaPaths`).
+/// scrolling ruler + (optional) text lane + video track + overlay lane +
+/// audio lane. Clips sit end to end on one video track, sized by the zoom;
+/// text overlays, video overlays (the picture-in-picture lane) and audio
+/// clips all float freely on their own lane, positioned by their own
+/// `start`/`startTime`. A playhead line — with a small grab handle sitting
+/// over the ruler — spans every lane and tracks the preview. Modelled on
+/// CapCut. Also accepts drag-and-drop of media files, routed the same way as
+/// the media browser's Import button (see `importMediaPaths`).
 class TimelinePanel extends ConsumerStatefulWidget {
   const TimelinePanel({super.key});
 
   static const _headerWidth = 150.0;
   static const _rulerHeight = 24.0;
+  static const _textLaneHeight = 32.0;
   static const _videoLaneHeight = 64.0;
   static const _laneGap = 6.0;
   static const _overlayLaneHeight = 48.0;
@@ -44,6 +49,14 @@ class TimelinePanel extends ConsumerStatefulWidget {
 
 class _TimelinePanelState extends ConsumerState<TimelinePanel> {
   bool _dragging = false;
+
+  /// The text track's selected overlay, for the terracotta bars' highlight
+  /// border. Text overlays have no "current selection" concept anywhere else
+  /// in the app (unlike audio clips/video overlays, which each have their own
+  /// provider) — see `text_panel.dart`, which just lists every overlay
+  /// inline rather than tracking one as "current" — so this stays local,
+  /// visual-only state rather than inventing app-wide persistence for it.
+  String? _selectedTextOverlayId;
 
   /// The timeline's horizontal scroll position. Owned here (rather than left
   /// implicit inside `SingleChildScrollView`) so wheel/trackpad handling can
@@ -189,6 +202,21 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     );
   }
 
+  /// Toggles a default transition entering [enteringClip] from the clip
+  /// before it — i.e. the boundary between [enteringClip] and its previous
+  /// neighbour on the video track. See `Clip.transitionId`'s doc comment:
+  /// the transition for a cut between clip N and clip N+1 lives on clip
+  /// N+1 ("entering" side), not clip N — so this selects [enteringClip]
+  /// (matching how the Transitions panel always edits `state.selected`) and
+  /// applies the catalogue's first preset, or clears it if one's already
+  /// set on that boundary.
+  void _toggleTransitionAt(WidgetRef ref, model.Clip enteringClip) {
+    final editor = ref.read(editorProvider.notifier);
+    editor.select(enteringClip.id);
+    editor.setSelectedTransition(
+        enteringClip.transitionId == null ? kTransitionCatalogue.first : null);
+  }
+
   Widget _buildTimeline(BuildContext context, WidgetRef ref) {
     final state = ref.watch(editorProvider);
     final px = ref.watch(timelineZoomProvider);
@@ -196,6 +224,7 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     final selectedAudioId = ref.watch(selectedAudioClipProvider);
     final videoOverlays = ref.watch(videoOverlaysProvider);
     final selectedOverlayId = ref.watch(selectedVideoOverlayProvider);
+    final textOverlays = ref.watch(textOverlaysProvider);
 
     final total = state.totalDuration;
     // Cumulative start offset of each clip on the timeline.
@@ -206,9 +235,9 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
       acc += c.duration;
     }
 
-    // The overlay/audio lanes' items are positioned independently of the
-    // video track, so the content area needs to be wide enough for whichever
-    // of the three extends further right.
+    // The text/overlay/audio lanes' items are positioned independently of
+    // the video track, so the content area needs to be wide enough for
+    // whichever of the four extends further right.
     var audioEnd = 0.0;
     for (final a in audioClips) {
       audioEnd = math.max(audioEnd, a.start + a.duration);
@@ -217,7 +246,17 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     for (final o in videoOverlays) {
       overlayEnd = math.max(overlayEnd, o.startTime + o.duration);
     }
-    final timelineSeconds = math.max(total, math.max(audioEnd, overlayEnd));
+    var textEnd = 0.0;
+    for (final t in textOverlays) {
+      textEnd = math.max(textEnd, t.end);
+    }
+    final timelineSeconds =
+        math.max(total, math.max(audioEnd, math.max(overlayEnd, textEnd)));
+
+    // CapCut hides a track entirely once it has nothing on it — the text
+    // lane (and its header row, see _trackHeader) only appears once there's
+    // at least one overlay to show.
+    final showTextLane = textOverlays.isNotEmpty;
 
     // Playhead in timeline seconds, derived from the preview position within
     // the selected clip.
@@ -230,18 +269,22 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
       playheadT = starts[selIdx] + within;
     }
 
+    final isEmpty = state.clips.isEmpty &&
+        audioClips.isEmpty &&
+        videoOverlays.isEmpty &&
+        textOverlays.isEmpty;
+
     return Container(
       color: AppColors.panel,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-              width: TimelinePanel._headerWidth, child: _trackHeader()),
+              width: TimelinePanel._headerWidth,
+              child: _trackHeader(showTextLane: showTextLane)),
           const VerticalDivider(width: 1, thickness: 1, color: AppColors.line),
           Expanded(
-            child: state.clips.isEmpty &&
-                    audioClips.isEmpty &&
-                    videoOverlays.isEmpty
+            child: isEmpty
                 ? Center(
                     child: Text(
                         'Imported clips show up here — drop media to add it',
@@ -258,229 +301,353 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                       onPointerPanZoomStart: (_) => _panZoomLastScale = 1.0,
                       onPointerPanZoomUpdate: _handlePanZoomUpdate,
                       child: SingleChildScrollView(
-                      controller: _hScroll,
-                      scrollDirection: Axis.horizontal,
-                      child: SizedBox(
-                        width: contentW.toDouble(),
-                        child: Column(
-                          children: [
-                            // The ruler is a dedicated scrub strip: click or
-                            // drag along it to move the playhead.
-                            GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTapDown: (d) => scrub(d.localPosition.dx),
-                              onHorizontalDragUpdate: (d) =>
-                                  scrub(d.localPosition.dx),
-                              child:
-                                  _Ruler(seconds: timelineSeconds, px: px),
-                            ),
-                            Expanded(
-                              child: Stack(
+                        controller: _hScroll,
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: contentW.toDouble(),
+                          child: Stack(
+                            children: [
+                              Column(
                                 children: [
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        // The one video track lane.
-                                        SizedBox(
-                                          height:
-                                              TimelinePanel._videoLaneHeight,
-                                          width: contentW.toDouble(),
-                                          child: Stack(
-                                            children: [
-                                              // Empty track space: click to
-                                              // scrub (clips above handle
-                                              // their own taps/drags and take
-                                              // priority).
-                                              Positioned.fill(
-                                                child: GestureDetector(
-                                                  behavior:
-                                                      HitTestBehavior.opaque,
-                                                  onTapDown: (d) =>
-                                                      scrub(d.localPosition.dx),
-                                                ),
+                                  // The ruler is a dedicated scrub strip:
+                                  // click or drag along it to move the
+                                  // playhead.
+                                  GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTapDown: (d) =>
+                                        scrub(d.localPosition.dx),
+                                    onHorizontalDragUpdate: (d) =>
+                                        scrub(d.localPosition.dx),
+                                    child: _Ruler(
+                                        seconds: timelineSeconds, px: px),
+                                  ),
+                                  Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          if (showTextLane) ...[
+                                            SizedBox(
+                                              height: TimelinePanel
+                                                  ._textLaneHeight,
+                                              width: contentW.toDouble(),
+                                              child: Stack(
+                                                children: [
+                                                  // Empty lane space:
+                                                  // tapping it clears the
+                                                  // (local-only) text
+                                                  // selection — same idiom
+                                                  // as the overlay/audio
+                                                  // lanes below.
+                                                  Positioned.fill(
+                                                    child: GestureDetector(
+                                                      behavior: HitTestBehavior
+                                                          .opaque,
+                                                      onTapDown: (_) =>
+                                                          setState(() =>
+                                                              _selectedTextOverlayId =
+                                                                  null),
+                                                    ),
+                                                  ),
+                                                  for (final overlay
+                                                      in textOverlays)
+                                                    Positioned(
+                                                      key:
+                                                          ValueKey(overlay.id),
+                                                      left: overlay.start * px,
+                                                      width:
+                                                          overlay.duration *
+                                                              px,
+                                                      top: 0,
+                                                      bottom: 0,
+                                                      child: _TextOverlayBar(
+                                                        overlay: overlay,
+                                                        selected: overlay
+                                                                .id ==
+                                                            _selectedTextOverlayId,
+                                                        onTap: () => setState(
+                                                            () =>
+                                                                _selectedTextOverlayId =
+                                                                    overlay
+                                                                        .id),
+                                                      ),
+                                                    ),
+                                                ],
                                               ),
-                                              for (var i = 0;
-                                                  i < state.clips.length;
-                                                  i++)
-                                                Positioned(
-                                                  key: ValueKey(
-                                                      state.clips[i].id),
-                                                  left: starts[i] * px,
-                                                  width:
-                                                      state.clips[i].duration *
-                                                          px,
-                                                  top: 0,
-                                                  bottom: 0,
-                                                  child: _ClipSlot(
-                                                    clip: state.clips[i],
-                                                    index: i,
-                                                    clips: state.clips,
-                                                    starts: starts,
-                                                    px: px,
-                                                    selected: state.clips[i]
-                                                            .id ==
-                                                        state.selectedId,
-                                                    onTap: () => ref
-                                                        .read(editorProvider
-                                                            .notifier)
-                                                        .select(
-                                                            state.clips[i].id),
-                                                    onReorder: (newIndex) =>
+                                            ),
+                                            const SizedBox(
+                                                height:
+                                                    TimelinePanel._laneGap),
+                                          ],
+                                          // The one video track lane.
+                                          SizedBox(
+                                            height: TimelinePanel
+                                                ._videoLaneHeight,
+                                            width: contentW.toDouble(),
+                                            child: Stack(
+                                              children: [
+                                                // Empty track space: click to
+                                                // scrub (clips above handle
+                                                // their own taps/drags and
+                                                // take priority).
+                                                Positioned.fill(
+                                                  child: GestureDetector(
+                                                    behavior: HitTestBehavior
+                                                        .opaque,
+                                                    onTapDown: (d) => scrub(
+                                                        d.localPosition.dx),
+                                                  ),
+                                                ),
+                                                for (var i = 0;
+                                                    i < state.clips.length;
+                                                    i++)
+                                                  Positioned(
+                                                    key: ValueKey(
+                                                        state.clips[i].id),
+                                                    left: starts[i] * px,
+                                                    width: state
+                                                            .clips[i]
+                                                            .duration *
+                                                        px,
+                                                    top: 0,
+                                                    bottom: 0,
+                                                    child: _ClipSlot(
+                                                      clip: state.clips[i],
+                                                      index: i,
+                                                      clips: state.clips,
+                                                      starts: starts,
+                                                      px: px,
+                                                      selected: state
+                                                              .clips[i].id ==
+                                                          state.selectedId,
+                                                      onTap: () => ref
+                                                          .read(editorProvider
+                                                              .notifier)
+                                                          .select(state
+                                                              .clips[i].id),
+                                                      onReorder: (newIndex) =>
+                                                          ref
+                                                              .read(
+                                                                  editorProvider
+                                                                      .notifier)
+                                                              .reorder(i,
+                                                                  newIndex),
+                                                      onTrimLeftDx: (dx) {
+                                                        final c = ref
+                                                            .read(
+                                                                editorProvider)
+                                                            .clips[i];
                                                         ref
                                                             .read(
                                                                 editorProvider
                                                                     .notifier)
-                                                            .reorder(
-                                                                i, newIndex),
-                                                    onTrimLeftDx: (dx) {
-                                                      final c = ref
-                                                          .read(editorProvider)
-                                                          .clips[i];
-                                                      ref
-                                                          .read(editorProvider
-                                                              .notifier)
-                                                          .setTrim(c.id,
-                                                              inPoint: c
-                                                                      .inPoint +
-                                                                  dx / px);
-                                                    },
-                                                    onTrimRightDx: (dx) {
-                                                      final c = ref
-                                                          .read(editorProvider)
-                                                          .clips[i];
-                                                      ref
-                                                          .read(editorProvider
-                                                              .notifier)
-                                                          .setTrim(c.id,
-                                                              outPoint: c
-                                                                      .outPoint +
-                                                                  dx / px);
-                                                    },
+                                                            .setTrim(c.id,
+                                                                inPoint: c
+                                                                        .inPoint +
+                                                                    dx / px);
+                                                      },
+                                                      onTrimRightDx: (dx) {
+                                                        final c = ref
+                                                            .read(
+                                                                editorProvider)
+                                                            .clips[i];
+                                                        ref
+                                                            .read(
+                                                                editorProvider
+                                                                    .notifier)
+                                                            .setTrim(c.id,
+                                                                outPoint: c
+                                                                        .outPoint +
+                                                                    dx / px);
+                                                      },
+                                                    ),
+                                                  ),
+                                                // Transition markers, one
+                                                // per boundary between
+                                                // adjacent clips — drawn
+                                                // after (so on top of) the
+                                                // clips, but small enough
+                                                // that they don't swallow
+                                                // the trim handles/reorder
+                                                // drag sitting at the same
+                                                // boundary (see
+                                                // _TransitionMarker).
+                                                for (var i = 0;
+                                                    i <
+                                                        state.clips.length - 1;
+                                                    i++)
+                                                  Positioned(
+                                                    left: starts[i + 1] * px -
+                                                        _TransitionMarker
+                                                                ._size /
+                                                            2,
+                                                    top: (TimelinePanel
+                                                                ._videoLaneHeight -
+                                                            _TransitionMarker
+                                                                ._size) /
+                                                        2,
+                                                    child: _TransitionMarker(
+                                                      active: state
+                                                              .clips[i + 1]
+                                                              .transitionId !=
+                                                          null,
+                                                      onTap: () =>
+                                                          _toggleTransitionAt(
+                                                              ref,
+                                                              state.clips[
+                                                                  i + 1]),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(
+                                              height: TimelinePanel._laneGap),
+                                          // The overlay lane: video overlays
+                                          // (picture-in-picture) float
+                                          // freely, positioned by their own
+                                          // `startTime` (unlike the video
+                                          // track, they don't shift each
+                                          // other) — same treatment as the
+                                          // audio lane below.
+                                          SizedBox(
+                                            height: TimelinePanel
+                                                ._overlayLaneHeight,
+                                            width: contentW.toDouble(),
+                                            child: Stack(
+                                              children: [
+                                                Positioned.fill(
+                                                  child: GestureDetector(
+                                                    behavior: HitTestBehavior
+                                                        .opaque,
+                                                    onTapDown: (_) => ref
+                                                        .read(
+                                                            selectedVideoOverlayProvider
+                                                                .notifier)
+                                                        .set(null),
                                                   ),
                                                 ),
-                                            ],
+                                                for (var i = 0;
+                                                    i <
+                                                        videoOverlays.length;
+                                                    i++)
+                                                  Positioned(
+                                                    key: ValueKey(
+                                                        videoOverlays[i].id),
+                                                    left: videoOverlays[i]
+                                                            .startTime *
+                                                        px,
+                                                    width: videoOverlays[i]
+                                                            .duration *
+                                                        px,
+                                                    top: 0,
+                                                    bottom: 0,
+                                                    child: _VideoOverlaySlot(
+                                                      overlay:
+                                                          videoOverlays[i],
+                                                      index: i,
+                                                      px: px,
+                                                      selected: videoOverlays[
+                                                                  i]
+                                                              .id ==
+                                                          selectedOverlayId,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(
-                                            height: TimelinePanel._laneGap),
-                                        // The overlay lane: video overlays
-                                        // (picture-in-picture) float freely,
-                                        // positioned by their own `startTime`
-                                        // (unlike the video track, they don't
-                                        // shift each other) — same treatment
-                                        // as the audio lane below.
-                                        SizedBox(
-                                          height:
-                                              TimelinePanel._overlayLaneHeight,
-                                          width: contentW.toDouble(),
-                                          child: Stack(
-                                            children: [
-                                              Positioned.fill(
-                                                child: GestureDetector(
-                                                  behavior:
-                                                      HitTestBehavior.opaque,
-                                                  onTapDown: (_) => ref
-                                                      .read(
-                                                          selectedVideoOverlayProvider
-                                                              .notifier)
-                                                      .set(null),
-                                                ),
-                                              ),
-                                              for (var i = 0;
-                                                  i < videoOverlays.length;
-                                                  i++)
-                                                Positioned(
-                                                  key: ValueKey(
-                                                      videoOverlays[i].id),
-                                                  left:
-                                                      videoOverlays[i]
-                                                          .startTime *
-                                                          px,
-                                                  width: videoOverlays[i]
-                                                          .duration *
-                                                      px,
-                                                  top: 0,
-                                                  bottom: 0,
-                                                  child: _VideoOverlaySlot(
-                                                    overlay: videoOverlays[i],
-                                                    index: i,
-                                                    px: px,
-                                                    selected:
-                                                        videoOverlays[i].id ==
-                                                            selectedOverlayId,
+                                          const SizedBox(
+                                              height: TimelinePanel._laneGap),
+                                          // The audio lane: clips float
+                                          // freely, positioned by their own
+                                          // `start` (unlike the video track,
+                                          // they don't shift each other).
+                                          SizedBox(
+                                            height: TimelinePanel
+                                                ._audioLaneHeight,
+                                            width: contentW.toDouble(),
+                                            child: Stack(
+                                              children: [
+                                                Positioned.fill(
+                                                  child: GestureDetector(
+                                                    behavior: HitTestBehavior
+                                                        .opaque,
+                                                    onTapDown: (_) => ref
+                                                        .read(
+                                                            selectedAudioClipProvider
+                                                                .notifier)
+                                                        .set(null),
                                                   ),
                                                 ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(
-                                            height: TimelinePanel._laneGap),
-                                        // The audio lane: clips float freely,
-                                        // positioned by their own `start`
-                                        // (unlike the video track, they don't
-                                        // shift each other).
-                                        SizedBox(
-                                          height:
-                                              TimelinePanel._audioLaneHeight,
-                                          width: contentW.toDouble(),
-                                          child: Stack(
-                                            children: [
-                                              Positioned.fill(
-                                                child: GestureDetector(
-                                                  behavior:
-                                                      HitTestBehavior.opaque,
-                                                  onTapDown: (_) => ref
-                                                      .read(
-                                                          selectedAudioClipProvider
-                                                              .notifier)
-                                                      .set(null),
-                                                ),
-                                              ),
-                                              for (var i = 0;
-                                                  i < audioClips.length;
-                                                  i++)
-                                                Positioned(
-                                                  key: ValueKey(
-                                                      audioClips[i].id),
-                                                  left: audioClips[i].start *
-                                                      px,
-                                                  width:
-                                                      audioClips[i].duration *
-                                                          px,
-                                                  top: 0,
-                                                  bottom: 0,
-                                                  child: _AudioClipSlot(
-                                                    clip: audioClips[i],
-                                                    index: i,
-                                                    px: px,
-                                                    selected:
-                                                        audioClips[i].id ==
-                                                            selectedAudioId,
+                                                for (var i = 0;
+                                                    i < audioClips.length;
+                                                    i++)
+                                                  Positioned(
+                                                    key: ValueKey(
+                                                        audioClips[i].id),
+                                                    left:
+                                                        audioClips[i].start *
+                                                            px,
+                                                    width: audioClips[i]
+                                                            .duration *
+                                                        px,
+                                                    top: 0,
+                                                    bottom: 0,
+                                                    child: _AudioClipSlot(
+                                                      clip: audioClips[i],
+                                                      index: i,
+                                                      px: px,
+                                                      selected:
+                                                          audioClips[i].id ==
+                                                              selectedAudioId,
+                                                    ),
                                                   ),
-                                                ),
-                                            ],
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  // Playhead, spanning both lanes.
-                                  Positioned(
-                                    left: playheadT * px,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Container(
-                                        width: 2, color: AppColors.accent),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
+                              // Playhead: spans the ruler and every lane
+                              // beneath it, with a small grab handle sitting
+                              // over the ruler. Purely visual (IgnorePointer)
+                              // so it never steals the ruler's own scrub
+                              // gesture, or any lane's tap/drag, from
+                              // underneath it.
+                              IgnorePointer(
+                                child: Stack(
+                                  children: [
+                                    Positioned(
+                                      left: playheadT * px - 1,
+                                      top: 0,
+                                      bottom: 0,
+                                      child: Container(
+                                          width: 2, color: AppColors.accent),
+                                    ),
+                                    Positioned(
+                                      left: playheadT * px - 6,
+                                      top: 2,
+                                      child: Container(
+                                        width: 12,
+                                        height: 9,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
                       ),
                     );
                   }),
@@ -490,64 +657,134 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
     );
   }
 
-  Widget _trackHeader() => Column(
+  /// The left-hand track-header gutter: one row per lane, each exactly as
+  /// tall as (and separated by the same gap as) its counterpart lane in the
+  /// scrolling content — see the matching `TimelinePanel._xLaneHeight`/
+  /// `_laneGap` constants used on both sides — so the controls here always
+  /// sit level with the right track. [showTextLane] must mirror whatever the
+  /// content side passed for the same build (see `_buildTimeline`), so the
+  /// text row appears/disappears in lockstep with its lane.
+  Widget _trackHeader({required bool showTextLane}) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: TimelinePanel._rulerHeight),
           const Divider(height: 1, thickness: 1, color: AppColors.line),
           Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: AppColors.well,
-                    borderRadius: BorderRadius.circular(4),
+                if (showTextLane) ...[
+                  SizedBox(
+                    height: TimelinePanel._textLaneHeight,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.title,
+                              size: 15,
+                              color: Colors.white.withValues(alpha: 0.5)),
+                          const SizedBox(width: 6),
+                          const Expanded(
+                            child:
+                                Text('Text', style: TextStyle(fontSize: 11)),
+                          ),
+                          _hdrIcon(Icons.lock_outline),
+                          const SizedBox(width: 8),
+                          _hdrIcon(Icons.visibility_outlined),
+                        ],
+                      ),
+                    ),
                   ),
-                  child: Icon(Icons.image_outlined,
-                      size: 16, color: Colors.white.withValues(alpha: 0.4)),
+                  const SizedBox(height: TimelinePanel._laneGap),
+                ],
+                SizedBox(
+                  height: TimelinePanel._videoLaneHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: AppColors.well,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Icon(Icons.image_outlined,
+                                  size: 16,
+                                  color:
+                                      Colors.white.withValues(alpha: 0.4)),
+                            ),
+                            const SizedBox(width: 6),
+                            const Text('Cover', style: TextStyle(fontSize: 11)),
+                          ],
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            _hdrIcon(Icons.play_arrow),
+                            _hdrIcon(Icons.lock_outline),
+                            _hdrIcon(Icons.visibility_outlined),
+                            _hdrIcon(Icons.volume_up_outlined),
+                            _hdrIcon(Icons.more_horiz),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 6),
-                const Text('Cover', style: TextStyle(fontSize: 11)),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _hdrIcon(Icons.play_arrow),
-                _hdrIcon(Icons.lock_outline),
-                _hdrIcon(Icons.visibility_outlined),
-                _hdrIcon(Icons.volume_up_outlined),
-                _hdrIcon(Icons.more_horiz),
-              ],
-            ),
-          ),
-          const SizedBox(height: TimelinePanel._laneGap),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                Icon(Icons.picture_in_picture_alt_outlined,
-                    size: 15, color: Colors.white.withValues(alpha: 0.5)),
-                const SizedBox(width: 6),
-                const Text('Overlay', style: TextStyle(fontSize: 11)),
-              ],
-            ),
-          ),
-          const SizedBox(height: TimelinePanel._laneGap),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                Icon(Icons.audiotrack_outlined,
-                    size: 15, color: Colors.white.withValues(alpha: 0.5)),
-                const SizedBox(width: 6),
-                const Text('Audio', style: TextStyle(fontSize: 11)),
+                const SizedBox(height: TimelinePanel._laneGap),
+                SizedBox(
+                  height: TimelinePanel._overlayLaneHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.picture_in_picture_alt_outlined,
+                            size: 15,
+                            color: Colors.white.withValues(alpha: 0.5)),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child: Text('Overlay',
+                              style: TextStyle(fontSize: 11)),
+                        ),
+                        _hdrIcon(Icons.lock_outline),
+                        const SizedBox(width: 8),
+                        _hdrIcon(Icons.visibility_outlined),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: TimelinePanel._laneGap),
+                SizedBox(
+                  height: TimelinePanel._audioLaneHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.av_timer,
+                            size: 15,
+                            color: Colors.white.withValues(alpha: 0.5)),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child:
+                              Text('Audio', style: TextStyle(fontSize: 11)),
+                        ),
+                        _hdrIcon(Icons.lock_outline),
+                        const SizedBox(width: 8),
+                        _hdrIcon(Icons.volume_up_outlined),
+                        const SizedBox(width: 8),
+                        _hdrIcon(Icons.more_horiz),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -558,10 +795,16 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
       Icon(icon, size: 15, color: Colors.white.withValues(alpha: 0.5));
 }
 
+/// The dark ruler strip: time labels (`00:00`, `00:03`, …) over a baseline of
+/// tick marks — a tall tick under each label, shorter minor ticks
+/// subdividing the gap to the next one, CapCut-style.
 class _Ruler extends StatelessWidget {
   const _Ruler({required this.seconds, required this.px});
   final double seconds;
   final double px;
+
+  /// Minor ticks drawn between each pair of labelled major ticks.
+  static const _minorsPerMajor = 4;
 
   @override
   Widget build(BuildContext context) {
@@ -573,21 +816,42 @@ class _Ruler extends StatelessWidget {
             : px > 12
                 ? 10
                 : 30;
+    final minorStep = step / _minorsPerMajor;
     final marks = <Widget>[];
-    for (var t = 0; t <= seconds + step; t += step) {
+    for (var major = 0; major <= seconds + step; major += step) {
+      marks.add(_tick(major.toDouble(), tall: true));
       marks.add(Positioned(
-        left: t * px,
-        top: 4,
-        child: Text(_fmt(t),
+        left: major * px,
+        top: 3,
+        child: Text(_fmt(major),
             style: TextStyle(
-                fontSize: 10, color: Colors.white.withValues(alpha: 0.4))),
+                fontSize: 10, color: Colors.white.withValues(alpha: 0.45))),
       ));
+      for (var s = 1; s < _minorsPerMajor; s++) {
+        final t = major + s * minorStep;
+        if (t > seconds + step) break;
+        marks.add(_tick(t, tall: false));
+      }
     }
-    return SizedBox(
+    return Container(
       height: TimelinePanel._rulerHeight,
+      decoration: const BoxDecoration(
+        color: AppColors.well,
+        border: Border(bottom: BorderSide(color: AppColors.line)),
+      ),
       child: Stack(children: marks),
     );
   }
+
+  Widget _tick(double t, {required bool tall}) => Positioned(
+        left: t * px,
+        bottom: 0,
+        child: Container(
+          width: 1,
+          height: tall ? 8 : 4,
+          color: Colors.white.withValues(alpha: tall ? 0.45 : 0.2),
+        ),
+      );
 
   static String _fmt(int s) {
     final m = (s ~/ 60).toString().padLeft(2, '0');
@@ -648,9 +912,93 @@ int _clipIndexAt(List<model.Clip> clips, List<double> starts, double t) {
   return t < starts.first ? 0 : clips.length - 1;
 }
 
+/// The small CapCut-style button straddling the boundary between two
+/// adjacent video clips: tap to toggle a default transition entering the
+/// clip on the right (see `_TimelinePanelState._toggleTransitionAt`).
+/// Deliberately small, and only handles taps (no drag), so it doesn't
+/// swallow the trim handles/reorder-drag area that also sit at the clip
+/// boundary (see [_ClipSlot]).
+class _TransitionMarker extends StatelessWidget {
+  const _TransitionMarker({required this.active, required this.onTap});
+
+  final bool active;
+  final VoidCallback onTap;
+
+  static const _size = 26.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        width: _size,
+        height: _size,
+        decoration: BoxDecoration(
+          color: active
+              ? AppColors.accent.withValues(alpha: 0.85)
+              : Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+        ),
+        child: Icon(Icons.compare_arrows,
+            size: 15,
+            color: Colors.white.withValues(alpha: active ? 1 : 0.75)),
+      ),
+    );
+  }
+}
+
+/// A text-track bar: a terracotta rounded chip showing the overlay's text,
+/// positioned by its [TextOverlay.start]/[TextOverlay.end]. Tap to select —
+/// see [_TimelinePanelState._selectedTextOverlayId] for why selection here is
+/// local, visual-only state.
+class _TextOverlayBar extends StatelessWidget {
+  const _TextOverlayBar({
+    required this.overlay,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final TextOverlay overlay;
+  final bool selected;
+  final VoidCallback onTap;
+
+  static const _barColor = Color(0xFFB0553C);
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: _barColor,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected ? AppColors.accent : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: Text(
+          overlay.text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+              fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+        ),
+      ),
+    );
+  }
+}
+
 /// A clip's bar background: a filmstrip of real frames across its width with
-/// a waveform strip along the bottom (CapCut-style), the filename label, and
-/// the selected/accent border. Thumbnails/waveform are fetched through
+/// a waveform strip along the bottom (CapCut-style), the filename label (in
+/// a small translucent-black chip, top-left), and the selected/accent
+/// border. Thumbnails/waveform are fetched through
 /// [clipFilmstripProvider]/[clipWaveformProvider] (see
 /// `thumbnails_view_model.dart`) — while those are loading (or if extraction
 /// isn't possible, e.g. no audio track) this just keeps showing the original
@@ -740,30 +1088,27 @@ class _ClipBar extends ConsumerWidget {
                 ),
               ),
             ),
-          // Accent tab + filename label, on top of everything, with a scrim
-          // behind the text so it stays legible over bright frames.
+          // Filename label, top-left, in a small translucent scrim chip —
+          // on top of everything, so it stays legible over bright frames.
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 4,
-                height: double.infinity,
-                color: AppColors.accent.withValues(alpha: 0.8),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
+              Flexible(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 1),
-                  margin: const EdgeInsets.only(top: 2),
+                  margin: const EdgeInsets.only(left: 6, top: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(3),
+                    color: Colors.black.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(clip.fileName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11)),
+                      style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white)),
                 ),
               ),
             ],
@@ -1012,9 +1357,10 @@ class _AudioClipSlotState extends ConsumerState<_AudioClipSlot> {
   }
 }
 
-/// An audio clip's bar background: a waveform across its width (reusing
-/// [audioClipWaveformProvider], which shares the engine's on-disk waveform
-/// cache with the main track's clip bars), the filename label, and the
+/// An audio clip's bar background: a blue CapCut-style bar with a waveform
+/// across its width (reusing [audioClipWaveformProvider], which shares the
+/// engine's on-disk waveform cache with the main track's clip bars), the
+/// filename label (in a small translucent-black chip, top-left), and the
 /// selected/accent border. Falls back to a plain colour bar while the
 /// waveform is loading or unavailable, same spirit as [_ClipBar].
 class _AudioClipBar extends ConsumerWidget {
@@ -1025,7 +1371,7 @@ class _AudioClipBar extends ConsumerWidget {
   final double widthPx;
   final bool selected;
 
-  static const _barColor = Color(0xFF2D4430);
+  static const _barColor = Color(0xFF26407A);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1061,25 +1407,22 @@ class _AudioClipBar extends ConsumerWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 4,
-                height: double.infinity,
-                color: AppColors.accent.withValues(alpha: 0.8),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
+              Flexible(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 1),
-                  margin: const EdgeInsets.only(top: 2),
+                  margin: const EdgeInsets.only(left: 6, top: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(3),
+                    color: Colors.black.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(clip.fileName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11)),
+                      style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white)),
                 ),
               ),
             ],
@@ -1226,11 +1569,11 @@ class _VideoOverlaySlotState extends ConsumerState<_VideoOverlaySlot> {
   }
 }
 
-/// A video overlay's bar background: a flat accent-tinted bar with a PiP icon
-/// and the filename label, plus the selected/accent border — same visual
-/// idiom as [_AudioClipBar] but without a waveform (this lane is video, not
-/// audio; a filmstrip would need the same thumbnail-extraction machinery
-/// [_ClipBar] uses, left for later).
+/// A video overlay's bar background: a violet, CapCut-style bar with a PiP
+/// icon and the filename label (in a small translucent-black chip), plus the
+/// selected/accent border — same visual idiom as [_AudioClipBar] but without
+/// a waveform (this lane is video, not audio; a filmstrip would need the
+/// same thumbnail-extraction machinery [_ClipBar] uses, left for later).
 class _VideoOverlayBar extends StatelessWidget {
   const _VideoOverlayBar(
       {required this.overlay, required this.widthPx, required this.selected});
@@ -1239,7 +1582,7 @@ class _VideoOverlayBar extends StatelessWidget {
   final double widthPx;
   final bool selected;
 
-  static const _barColor = Color(0xFF4A2D55);
+  static const _barColor = Color(0xFF5B3B8C);
 
   @override
   Widget build(BuildContext context) {
@@ -1260,20 +1603,17 @@ class _VideoOverlayBar extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 4,
-                height: double.infinity,
-                color: AppColors.accent.withValues(alpha: 0.8),
+              Padding(
+                padding: const EdgeInsets.only(left: 6, top: 7),
+                child: Icon(Icons.picture_in_picture_alt_outlined,
+                    size: 12, color: Colors.white.withValues(alpha: 0.7)),
               ),
-              const SizedBox(width: 6),
-              Icon(Icons.picture_in_picture_alt_outlined,
-                  size: 12, color: Colors.white.withValues(alpha: 0.6)),
               const SizedBox(width: 4),
-              Expanded(
+              Flexible(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 1),
-                  margin: const EdgeInsets.only(top: 2),
+                  margin: const EdgeInsets.only(top: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.35),
                     borderRadius: BorderRadius.circular(3),

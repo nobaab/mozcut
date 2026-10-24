@@ -11,6 +11,7 @@ import 'package:mozcut/domain/models/text_overlay.dart';
 import 'package:mozcut/domain/models/video_overlay.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_ui_state.dart';
 import 'package:mozcut/ui/features/editor/view_models/editor_view_model.dart';
+import 'package:mozcut/ui/features/editor/view_models/text_overlays_view_model.dart';
 import 'package:mozcut/ui/features/editor/view_models/video_overlays_view_model.dart';
 import 'package:mozcut/ui/features/editor/views/timeline_panel.dart';
 
@@ -187,6 +188,68 @@ void main() {
     expect(clips[0].duration, closeTo(5, 0.001));
     expect(clips[1].duration, closeTo(7, 0.001));
     expect(find.text('clip.mp4'), findsNWidgets(2));
+  });
+
+  testWidgets('a text overlay renders a bar on the text track',
+      (tester) async {
+    final container = ProviderContainer(
+      overrides: [engineProvider.overrideWithValue(FakeEngine())],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: TimelinePanel())),
+      ),
+    );
+
+    // The text lane only appears once there's something on it (CapCut hides
+    // empty tracks) — adding an overlay should bring the bar (and its text)
+    // into view.
+    container.read(textOverlaysProvider.notifier).add();
+    await tester.pump();
+
+    expect(find.text('Sample text'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a transition marker appears between two adjacent clips and toggling '
+      'it sets a transition on the right-hand clip', (tester) async {
+    final container = ProviderContainer(
+      overrides: [engineProvider.overrideWithValue(FakeEngine())],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: TimelinePanel())),
+      ),
+    );
+
+    final editor = container.read(editorProvider.notifier);
+    await editor.addClip('/a/first.mp4');
+    await editor.addClip('/b/second.mp4');
+    await tester.pump();
+
+    // One boundary between the two clips -> exactly one marker.
+    expect(find.byIcon(Icons.compare_arrows), findsOneWidget);
+
+    // Tapping it applies a default transition entering the clip on the
+    // right of that boundary (Clip.transitionId lives on the "into" side of
+    // a cut — see its doc comment).
+    await tester.tap(find.byIcon(Icons.compare_arrows));
+    await tester.pump();
+
+    final clips = container.read(editorProvider).clips;
+    expect(clips[0].transitionId, isNull);
+    expect(clips[1].transitionId, isNotNull);
+
+    // Tapping again clears it.
+    await tester.tap(find.byIcon(Icons.compare_arrows));
+    await tester.pump();
+    expect(container.read(editorProvider).clips[1].transitionId, isNull);
   });
 
   test('updateTransform mutates only the selected clip, partial updates keep the rest', () async {
