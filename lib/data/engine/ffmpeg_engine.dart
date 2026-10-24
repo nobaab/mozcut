@@ -142,6 +142,33 @@ class FfmpegEngine implements Engine {
       canvasHeight: canvasHeight,
     );
     try {
+      // GIF has no audio track and needs its own palette: ffmpeg's default
+      // GIF quantizer (a fixed websafe-ish palette) looks noticeably banded,
+      // so the standard fix is to build a per-export palette from the actual
+      // frames (`palettegen`) and dither against it (`paletteuse`). `split`
+      // feeds the same video pad into both: one copy becomes the palette
+      // source, the other is the stream that gets quantized against it.
+      // Appended onto the *existing* filtergraph's final video label, so
+      // every earlier stage (transforms, captions, text/sticker overlays,
+      // resize) still applies exactly as it does for every other format —
+      // this is strictly additive, no format but GIF ever reaches this
+      // branch, so `mp4`/`mov` exports are byte-for-byte unaffected.
+      // ffmpeg's -filter_complex parser requires every declared output pad
+      // to be *connected* to something — mapped to the output file, or fed
+      // into another filter — or it refuses to run at all ("Filter ...
+      // unconnected"). GIF never maps the audio pad (`graph.audioLabel`,
+      // e.g. `[outa]`), so route it into `anullsink` (a filter that just
+      // discards its input) purely to satisfy that requirement — no audio
+      // stream ends up in the output either way.
+      final isGif = settings.isGif;
+      final filterComplex = isGif
+          ? '${graph.filterComplex};${graph.videoLabel}split[gifsrc][gifpal];'
+              '[gifpal]palettegen[gifp];'
+              '[gifsrc][gifp]paletteuse[gifout];'
+              '${graph.audioLabel}anullsink'
+          : graph.filterComplex;
+      final videoMapLabel = isGif ? '[gifout]' : graph.videoLabel;
+
       // One ffmpeg call: each clip is an input trimmed with -ss/-to, then the
       // concat filter joins them. Re-encoding (not stream copy) so clips with
       // different codecs/resolutions still join cleanly — correctness over
@@ -149,9 +176,9 @@ class FfmpegEngine implements Engine {
       final args = <String>[
         '-y',
         ...graph.inputArgs,
-        '-filter_complex', graph.filterComplex,
-        '-map', graph.videoLabel,
-        '-map', graph.audioLabel,
+        '-filter_complex', filterComplex,
+        '-map', videoMapLabel,
+        if (!isGif) ...['-map', graph.audioLabel],
         ...settings.toFfmpegArgs(),
         '-progress', 'pipe:1',
         '-nostats',
@@ -162,6 +189,60 @@ class FfmpegEngine implements Engine {
           totalDuration: totalDuration,
           action: 'export',
           onProgress: onProgress);
+    } finally {
+      await _deleteAll(graph.tempFiles);
+    }
+  }
+
+  @override
+  Future<void> exportStillFrame({
+    required List<Clip> clips,
+    ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
+    required double atSeconds,
+    required String outputPath,
+  }) async {
+    if (clips.isEmpty) {
+      throw EngineException('Nothing to export — the timeline is empty.');
+    }
+
+    // Reuses the exact same filtergraph export()/renderPreview() build (same
+    // transforms, captions, text/sticker overlays) so a still frame always
+    // matches what the real export would show at this instant — the only
+    // difference is `-ss` (seeked on the *composited* output, after the
+    // filtergraph, so it lines up with the same timeline TextOverlay.start/
+    // end and captions are defined against) plus `-frames:v 1` instead of a
+    // full encode.
+    final graph = await _buildFilterGraph(
+      clips: clips,
+      textOverlays: textOverlays,
+      stickerOverlays: stickerOverlays,
+      scaleFilter: settings.scaleFilter,
+      canvasWidth: canvasWidth,
+      canvasHeight: canvasHeight,
+    );
+    try {
+      // Same `anullsink` reasoning as the GIF branch in [export]: this never
+      // maps `graph.audioLabel` (a still frame has no audio), so it has to
+      // be routed somewhere or ffmpeg's filtergraph parser rejects the whole
+      // graph as having an unconnected output pad.
+      final filterComplex = '${graph.filterComplex};${graph.audioLabel}anullsink';
+      final args = <String>[
+        '-y',
+        ...graph.inputArgs,
+        '-filter_complex', filterComplex,
+        '-map', graph.videoLabel,
+        '-ss', atSeconds.toStringAsFixed(3),
+        '-frames:v', '1',
+        outputPath,
+      ];
+      final result = await Process.run(_ffmpeg, args);
+      if (result.exitCode != 0) {
+        throw EngineException('still-frame export failed: ${result.stderr}');
+      }
     } finally {
       await _deleteAll(graph.tempFiles);
     }

@@ -80,6 +80,43 @@ void main() {
       expect(const ExportSettings(format: ExportFormat.mov).fileExtension,
           'mov');
     });
+
+    test('gif maps to the gif extension and is flagged isGif', () {
+      const settings = ExportSettings(format: ExportFormat.gif);
+      expect(settings.fileExtension, 'gif');
+      expect(settings.isGif, isTrue);
+      expect(const ExportSettings(format: ExportFormat.mp4).isGif, isFalse);
+    });
+  });
+
+  group('gif args', () {
+    test('drops video codec/crf and audio, loops forever', () {
+      const settings = ExportSettings(format: ExportFormat.gif);
+      expect(
+        settings.toFfmpegArgs(),
+        ['-loop', '0'],
+      );
+    });
+
+    test('still threads fps through as -r', () {
+      const settings = ExportSettings(format: ExportFormat.gif, fps: 15);
+      expect(
+        settings.toFfmpegArgs(),
+        ['-r', '15', '-loop', '0'],
+      );
+    });
+
+    test('codec/quality are ignored for gif args', () {
+      const settings = ExportSettings(
+        format: ExportFormat.gif,
+        codec: ExportCodec.hevc,
+        quality: ExportQuality.high,
+      );
+      final args = settings.toFfmpegArgs();
+      expect(args, isNot(contains('-c:v')));
+      expect(args, isNot(contains('-crf')));
+      expect(args, isNot(contains('-c:a')));
+    });
   });
 
   group('toFfmpegArgs full mapping', () {

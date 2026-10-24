@@ -56,6 +56,17 @@ class _NoEngine implements Engine {
     int width = 480,
   }) async {}
   @override
+  Future<void> exportStillFrame({
+    required List<Clip> clips,
+    ExportSettings settings = const ExportSettings(),
+    List<TextOverlay> textOverlays = const [],
+    List<StickerOverlay> stickerOverlays = const [],
+    int canvasWidth = 1920,
+    int canvasHeight = 1080,
+    required double atSeconds,
+    required String outputPath,
+  }) async {}
+  @override
   Future<void> extractAudio({
     required Clip clip,
     required String outputPath,
