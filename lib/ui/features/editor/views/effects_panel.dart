@@ -120,9 +120,9 @@ class _EffectsPanelState extends ConsumerState<EffectsPanel> {
             onChanged: (value) => setState(() => _query = value),
           ),
         ),
-        if (clip?.effectId != null)
+        if (clip?.effectId != null) ...[
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
             child: Row(
               children: [
                 Expanded(
@@ -139,6 +139,33 @@ class _EffectsPanelState extends ConsumerState<EffectsPanel> {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            child: Row(
+              children: [
+                Text('Intensity',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.55))),
+                Expanded(
+                  child: Slider(
+                    value: clip.effectIntensity.clamp(0.0, 1.0),
+                    onChanged: (v) => ref
+                        .read(editorProvider.notifier)
+                        .setSelectedEffectIntensity(v),
+                  ),
+                ),
+                SizedBox(
+                  width: 38,
+                  child: Text(
+                      '${(clip.effectIntensity * 100).round()}%',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        ],
         SizedBox(
           height: AppSpacing.controlHeight,
           child: ListView.separated(

@@ -191,9 +191,9 @@ class _FiltersPanelState extends ConsumerState<FiltersPanel> {
             onChanged: (v) => setState(() => _search = v),
           ),
         ),
-        if (clip?.filterId != null)
+        if (clip?.filterId != null) ...[
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
             child: Row(
               children: [
                 Expanded(
@@ -210,6 +210,33 @@ class _FiltersPanelState extends ConsumerState<FiltersPanel> {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            child: Row(
+              children: [
+                Text('Intensity',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.55))),
+                Expanded(
+                  child: Slider(
+                    value: clip.filterIntensity.clamp(0.0, 1.0),
+                    onChanged: (v) => ref
+                        .read(editorProvider.notifier)
+                        .setSelectedFilterIntensity(v),
+                  ),
+                ),
+                SizedBox(
+                  width: 38,
+                  child: Text(
+                      '${(clip.filterIntensity * 100).round()}%',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        ],
         SizedBox(
           height: AppSpacing.controlHeight,
           child: ListView.separated(

@@ -487,6 +487,14 @@ class Editor extends _$Editor {
     _mapSelected((c) => c.copyWith(filterId: filterId, clearFilterId: filterId == null));
   }
 
+  /// Sets the selected clip's filter strength ([Clip.filterIntensity]),
+  /// clamped to 0..1. Meaningful only while [Clip.filterId] is set, but
+  /// harmless (and simply ignored on export) otherwise.
+  void setSelectedFilterIntensity(double intensity) {
+    _mapSelected((c) =>
+        c.copyWith(filterIntensity: intensity.clamp(0.0, 1.0).toDouble()));
+  }
+
   // ── effects ──
 
   /// Sets (or, passing null, clears) the applied video effect on the
@@ -495,6 +503,14 @@ class Editor extends _$Editor {
   void setSelectedEffect(String? effectId) {
     _mapSelected((c) =>
         c.copyWith(effectId: effectId, clearEffectId: effectId == null));
+  }
+
+  /// Sets the selected clip's effect strength ([Clip.effectIntensity]),
+  /// clamped to 0..1. Meaningful only while [Clip.effectId] is set, but
+  /// harmless (and simply ignored on export) otherwise.
+  void setSelectedEffectIntensity(double intensity) {
+    _mapSelected((c) =>
+        c.copyWith(effectIntensity: intensity.clamp(0.0, 1.0).toDouble()));
   }
 
   // ── transition ──
